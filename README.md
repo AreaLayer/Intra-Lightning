@@ -99,11 +99,3 @@ Some of the configuration options can be set using command line arguments or env
 These will have the highest precedence and overwrite the network specific configuration.
 
 instance > network > root
-
-## Documentation
-
-Please visit the [documentation website](https://docs.l2.technology) for installation and getting started instructions.
-
-## Community
-
-Please join [our discord community](https://discord.gg/bneS492Tqu) to discuss anything related to this project.
