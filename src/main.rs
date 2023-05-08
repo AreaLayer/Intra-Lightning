@@ -392,11 +392,39 @@ fn main() {
             }
         }
 
+ more-umbrel-fixes
+    let http_service = router
+        .layer(CookieManagerLayer::new())
+        .layer(AddExtensionLayer::new(request_context.clone()))
+        .into_make_service();
+
+    let grpc_service = Server::builder()
+        .add_service(NodeServer::new(GrpcNodeService {
+            request_context: request_context.clone(),
+        }))
+        .add_service(AdminServer::new(GrpcAdminService {
+            request_context: request_context.clone(),
+        }))
+        .into_service();
+
+    let hybrid_service = hybrid::hybrid(http_service, grpc_service);
+
+    let server = hyper::Server::bind(&addr).serve(hybrid_service);
+
+    println!(
+        "manage your sensei node at http://localhost:{}/admin/nodes",
+        config.api_port
+    );
+
+    if let Err(e) = server.await {
+        eprintln!("server error: {}", e);
+    }
         let _res = event_sender.send(SenseiEvent::InstanceStopped {
             instance_name: config.instance_name.clone(),
             api_host: config.api_host.clone(),
         });
     });
+main
 }
 
 async fn static_handler(uri: Uri) -> impl IntoResponse {

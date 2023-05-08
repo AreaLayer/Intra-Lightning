@@ -756,10 +756,36 @@ pub async fn login_node(
                 Ok(response) => match response {
                     AdminResponse::StartNode { macaroon } => {
                         let macaroon_cookie = Cookie::build("macaroon", macaroon.clone())
+ more-umbrel-fixes
+                            .http_only(true)
+                            .finish();
+                        cookies.add(macaroon_cookie);
+                        Ok(Json(json!({
+                            "pubkey": node.pubkey,
+                            "alias": node.alias,
+                            "macaroon": macaroon,
+                            "role": node.role
+                        })))
+                    }
+                    AdminResponse::StartAdmin {
+                        pubkey:_,
+                        macaroon,
+                        token,
+                    } => {
+                        let macaroon_cookie = Cookie::build("macaroon", macaroon.clone())
+                            .http_only(true)
+                            .finish();
+                        cookies.add(macaroon_cookie);
+                        let token_cookie = Cookie::build("token", token.clone())
+                            .http_only(true)
+                            .finish();
+                        cookies.add(token_cookie);
+
                             .path("/")
                             .http_only(true)
                             .finish();
                         cookies.add(macaroon_cookie);
+ main
                         Ok(Json(json!({
                             "pubkey": node.id,
                             "alias": node.alias,
@@ -801,7 +827,21 @@ pub async fn init_sensei(
 
     match admin_service.call(request).await {
         Ok(response) => match response {
+ more-umbrel-fixes
+            AdminResponse::CreateAdmin {
+                pubkey,
+                macaroon,
+                external_id,
+                role,
+                token,
+            } => {
+                let macaroon_cookie = Cookie::build("macaroon", macaroon.clone())
+                    .http_only(true)
+                    .finish();
+
+=======
             AdminResponse::CreateAdmin { token } => {
+ main
                 let token_cookie = Cookie::build("token", token.clone())
                     .http_only(true)
                     .finish();
@@ -874,10 +914,46 @@ pub async fn create_node(
         }
     }?;
 
+ more-umbrel-fixes
+    match request {
+        AdminRequest::StartAdmin { passphrase } => {
+            match request_context
+                .admin_service
+                .call(AdminRequest::StartAdmin { passphrase })
+                .await
+            {
+                Ok(response) => match response {
+                    AdminResponse::StartAdmin {
+                        pubkey,
+                        macaroon,
+                        token,
+                    } => {
+                        let macaroon_cookie = Cookie::build("macaroon", macaroon.clone())
+                            .http_only(true)
+                            .permanent()
+                            .finish();
+                        cookies.add(macaroon_cookie);
+                        let token_cookie = Cookie::build("token", token.clone())
+                            .http_only(true)
+                            .permanent()
+                            .finish();
+                        cookies.add(token_cookie);
+                        Ok(Json(AdminResponse::StartAdmin {
+                            pubkey,
+                            macaroon,
+                            token,
+                        }))
+                    }
+                    _ => Err(StatusCode::UNPROCESSABLE_ENTITY),
+                },
+                Err(_err) => Err(StatusCode::UNAUTHORIZED),
+            }
+=======
     if authenticated {
         match admin_service.call(request).await {
             Ok(response) => Ok(Json(response)),
             Err(_err) => Err(StatusCode::UNAUTHORIZED),
+ main
         }
     } else {
         Err(StatusCode::UNAUTHORIZED)
