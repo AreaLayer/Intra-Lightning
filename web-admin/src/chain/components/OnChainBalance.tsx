@@ -8,11 +8,14 @@ const OnChainBalance = () => {
     return null;
   }
 
-  let { balanceSatoshis } = data;
+  let { onchainBalanceSats } = data;
 
   return (
-    <div className="bg-gray-accent1 p-8 max-w-xl mx-auto text-center inline-block">
-      <div className="text-5xl font-extrabold">{Intl.NumberFormat().format(balanceSatoshis)} <span className="font-bold">sats</span></div>
+    <div className="bg-gray-accent2 rounded-xl p-8 max-w-xl mx-auto text-center inline-block">
+      <div className="text-5xl font-extrabold">
+        {Intl.NumberFormat().format(onchainBalanceSats)}{" "}
+        <span className="font-bold">sats</span>
+      </div>
     </div>
   );
 };

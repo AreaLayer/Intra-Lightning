@@ -11,18 +11,28 @@ use std::sync::Arc;
 
 pub use super::sensei::node_server::{Node, NodeServer};
 
-use super::sensei::{
-    CloseChannelRequest, CloseChannelResponse, ConnectPeerRequest, ConnectPeerResponse,
-    CreateInvoiceRequest, CreateInvoiceResponse, DeletePaymentRequest, DeletePaymentResponse,
-    GetBalanceRequest, GetBalanceResponse, GetUnusedAddressRequest, GetUnusedAddressResponse,
-    InfoRequest, InfoResponse, KeysendRequest, KeysendResponse, LabelPaymentRequest,
-    LabelPaymentResponse, ListChannelsRequest, ListChannelsResponse, ListPaymentsRequest,
-    ListPaymentsResponse, ListPeersRequest, ListPeersResponse, OpenChannelRequest,
-    OpenChannelResponse, PayInvoiceRequest, PayInvoiceResponse, SignMessageRequest,
-    SignMessageResponse, StartNodeRequest, StartNodeResponse, StopNodeRequest, StopNodeResponse,
+use super::{
+    sensei::{
+        AddKnownPeerRequest, AddKnownPeerResponse, CloseChannelRequest, CloseChannelResponse,
+        ConnectPeerRequest, ConnectPeerResponse, CreateInvoiceRequest, CreateInvoiceResponse,
+        CreatePhantomInvoiceRequest, CreatePhantomInvoiceResponse, DecodeInvoiceRequest,
+        DecodeInvoiceResponse, DeletePaymentRequest, DeletePaymentResponse, GetBalanceRequest,
+        GetBalanceResponse, GetPhantomRouteHintsRequest, GetPhantomRouteHintsResponse,
+        GetUnusedAddressRequest, GetUnusedAddressResponse, InfoRequest, InfoResponse,
+        KeysendRequest, KeysendResponse, LabelPaymentRequest, LabelPaymentResponse,
+        ListChannelsRequest, ListChannelsResponse, ListKnownPeersRequest, ListKnownPeersResponse,
+        ListPaymentsRequest, ListPaymentsResponse, ListPeersRequest, ListPeersResponse,
+        ListPhantomPaymentsRequest, ListPhantomPaymentsResponse, ListUnspentRequest,
+        ListUnspentResponse, NetworkGraphInfoRequest, NetworkGraphInfoResponse,
+        OpenChannelsRequest, OpenChannelsResponse, PayInvoiceRequest, PayInvoiceResponse,
+        RemoveKnownPeerRequest, RemoveKnownPeerResponse, SignMessageRequest, SignMessageResponse,
+        StartNodeRequest, StartNodeResponse, StopNodeRequest, StopNodeResponse,
+        VerifyMessageRequest, VerifyMessageResponse,
+    },
+    utils::raw_macaroon_from_metadata,
 };
 
-use crate::{
+use senseicore::{
     services::{
         admin::AdminRequest,
         node::{NodeRequest, NodeResponse},
@@ -32,86 +42,72 @@ use crate::{
 use tonic::{metadata::MetadataMap, Response, Status};
 
 pub struct NodeService {
-    pub request_context: Arc<crate::RequestContext>,
+    pub admin_service: Arc<senseicore::services::admin::AdminService>,
 }
 impl NodeService {
     async fn authenticated_request(
         &self,
         metadata: MetadataMap,
         request: NodeRequest,
-    ) -> Result<NodeResponse, tonic::Status> {
-        let macaroon_hex_string = self.raw_macaroon_from_metadata(metadata)?;
+    ) -> Result<NodeResponse, Status> {
+        match raw_macaroon_from_metadata(metadata)? {
+            None => Err(Status::unauthenticated("macaroon required")),
+            Some(macaroon_hex_string) => {
+                let (macaroon, session) =
+                    utils::macaroon_with_session_from_hex_str(&macaroon_hex_string)
+                        .map_err(|_e| Status::unauthenticated("invalid macaroon"))?;
+                let pubkey = session.pubkey.clone();
 
-        let (macaroon, session) =
-            utils::macaroon_with_session_from_hex_str(&macaroon_hex_string)
-                .map_err(|_e| tonic::Status::unauthenticated("invalid macaroon"))?;
-        let pubkey = session.pubkey.clone();
+                let node_directory = self.admin_service.node_directory.lock().await;
 
-        let node_directory = self.request_context.node_directory.lock().await;
-
-        match node_directory.get(&session.pubkey) {
-            Some(handle) => {
-                handle
-                    .node
-                    .verify_macaroon(macaroon, session)
-                    .await
-                    .map_err(|_e| Status::unauthenticated("invalid macaroon: failed to verify"))?;
-
-                match request {
-                    NodeRequest::StopNode {} => {
-                        drop(node_directory);
-                        let admin_request = AdminRequest::StopNode { pubkey };
-                        let _ = self
-                            .request_context
-                            .admin_service
-                            .call(admin_request)
+                match node_directory.get(&session.pubkey) {
+                    Some(Some(handle)) => {
+                        handle
+                            .node
+                            .verify_macaroon(macaroon, session)
                             .await
-                            .map_err(|_e| Status::unknown("failed to stop node"))?;
-                        Ok(NodeResponse::StopNode {})
+                            .map_err(|_e| {
+                                Status::unauthenticated("invalid macaroon: failed to verify")
+                            })?;
+
+                        match request {
+                            NodeRequest::StopNode {} => {
+                                drop(node_directory);
+                                let admin_request = AdminRequest::StopNode { pubkey };
+                                let _ = self
+                                    .admin_service
+                                    .call(admin_request)
+                                    .await
+                                    .map_err(|_e| Status::unknown("failed to stop node"))?;
+                                Ok(NodeResponse::StopNode {})
+                            }
+                            _ => handle
+                                .node
+                                .call(request)
+                                .await
+                                .map_err(|_e| Status::unknown("error")),
+                        }
                     }
-                    _ => handle
-                        .node
-                        .call(request)
-                        .await
-                        .map_err(|_e| Status::unknown("error")),
+                    Some(None) => Err(Status::not_found("node is in process of being started")),
+                    None => match request {
+                        NodeRequest::StartNode { passphrase } => {
+                            drop(node_directory);
+                            let admin_request = AdminRequest::StartNode {
+                                passphrase,
+                                pubkey: session.pubkey,
+                            };
+                            let _ = self.admin_service.call(admin_request).await.map_err(|_e| {
+                                Status::unauthenticated(
+                                    "failed to start node, likely invalid passphrase",
+                                )
+                            })?;
+                            Ok(NodeResponse::StartNode {})
+                        }
+                        _ => Err(Status::not_found("node with that pubkey not found")),
+                    },
                 }
             }
-            None => match request {
-                NodeRequest::StartNode { passphrase } => {
-                    drop(node_directory);
-                    let admin_request = AdminRequest::StartNode {
-                        passphrase,
-                        pubkey: session.pubkey,
-                    };
-                    let _ = self
-                        .request_context
-                        .admin_service
-                        .call(admin_request)
-                        .await
-                        .map_err(|_e| {
-                            Status::unauthenticated(
-                                "failed to start node, likely invalid passphrase",
-                            )
-                        })?;
-                    Ok(NodeResponse::StartNode {})
-                }
-                _ => Err(Status::not_found("node with that pubkey not found")),
-            },
         }
-    }
-
-    fn raw_macaroon_from_metadata(&self, metadata: MetadataMap) -> Result<String, tonic::Status> {
-        let macaroon = metadata.get("macaroon");
-
-        if macaroon.is_none() {
-            return Err(Status::unauthenticated("macaroon is required"));
-        }
-
-        macaroon
-            .unwrap()
-            .to_str()
-            .map(String::from)
-            .map_err(|_e| Status::unauthenticated("invalid macaroon: must be ascii"))
     }
 }
 
@@ -120,7 +116,7 @@ impl Node for NodeService {
     async fn start_node(
         &self,
         request: tonic::Request<StartNodeRequest>,
-    ) -> Result<tonic::Response<StartNodeResponse>, tonic::Status> {
+    ) -> Result<Response<StartNodeResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -131,7 +127,7 @@ impl Node for NodeService {
     async fn stop_node(
         &self,
         request: tonic::Request<StopNodeRequest>,
-    ) -> Result<tonic::Response<StopNodeResponse>, tonic::Status> {
+    ) -> Result<Response<StopNodeResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -142,7 +138,7 @@ impl Node for NodeService {
     async fn get_unused_address(
         &self,
         request: tonic::Request<GetUnusedAddressRequest>,
-    ) -> Result<tonic::Response<GetUnusedAddressResponse>, tonic::Status> {
+    ) -> Result<Response<GetUnusedAddressResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -153,17 +149,17 @@ impl Node for NodeService {
     async fn get_balance(
         &self,
         request: tonic::Request<GetBalanceRequest>,
-    ) -> Result<tonic::Response<GetBalanceResponse>, tonic::Status> {
+    ) -> Result<Response<GetBalanceResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
             .map(Response::new)
             .map_err(|_e| Status::unknown("unknown error"))
     }
-    async fn open_channel(
+    async fn open_channels(
         &self,
-        request: tonic::Request<OpenChannelRequest>,
-    ) -> Result<tonic::Response<OpenChannelResponse>, tonic::Status> {
+        request: tonic::Request<OpenChannelsRequest>,
+    ) -> Result<Response<OpenChannelsResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -173,7 +169,17 @@ impl Node for NodeService {
     async fn pay_invoice(
         &self,
         request: tonic::Request<PayInvoiceRequest>,
-    ) -> Result<tonic::Response<PayInvoiceResponse>, tonic::Status> {
+    ) -> Result<Response<PayInvoiceResponse>, Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn decode_invoice(
+        &self,
+        request: tonic::Request<DecodeInvoiceRequest>,
+    ) -> Result<Response<DecodeInvoiceResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -183,7 +189,7 @@ impl Node for NodeService {
     async fn keysend(
         &self,
         request: tonic::Request<KeysendRequest>,
-    ) -> Result<tonic::Response<KeysendResponse>, tonic::Status> {
+    ) -> Result<Response<KeysendResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -193,7 +199,27 @@ impl Node for NodeService {
     async fn create_invoice(
         &self,
         request: tonic::Request<CreateInvoiceRequest>,
-    ) -> Result<tonic::Response<CreateInvoiceResponse>, tonic::Status> {
+    ) -> Result<Response<CreateInvoiceResponse>, Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn create_phantom_invoice(
+        &self,
+        request: tonic::Request<CreatePhantomInvoiceRequest>,
+    ) -> Result<Response<CreatePhantomInvoiceResponse>, Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn get_phantom_route_hints(
+        &self,
+        request: tonic::Request<GetPhantomRouteHintsRequest>,
+    ) -> Result<Response<GetPhantomRouteHintsResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -203,7 +229,7 @@ impl Node for NodeService {
     async fn label_payment(
         &self,
         request: tonic::Request<LabelPaymentRequest>,
-    ) -> Result<tonic::Response<LabelPaymentResponse>, tonic::Status> {
+    ) -> Result<Response<LabelPaymentResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -213,7 +239,7 @@ impl Node for NodeService {
     async fn delete_payment(
         &self,
         request: tonic::Request<DeletePaymentRequest>,
-    ) -> Result<tonic::Response<DeletePaymentResponse>, tonic::Status> {
+    ) -> Result<Response<DeletePaymentResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -223,7 +249,7 @@ impl Node for NodeService {
     async fn connect_peer(
         &self,
         request: tonic::Request<ConnectPeerRequest>,
-    ) -> Result<tonic::Response<ConnectPeerResponse>, tonic::Status> {
+    ) -> Result<Response<ConnectPeerResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -233,7 +259,7 @@ impl Node for NodeService {
     async fn list_channels(
         &self,
         request: tonic::Request<ListChannelsRequest>,
-    ) -> Result<tonic::Response<ListChannelsResponse>, tonic::Status> {
+    ) -> Result<Response<ListChannelsResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -243,7 +269,17 @@ impl Node for NodeService {
     async fn list_payments(
         &self,
         request: tonic::Request<ListPaymentsRequest>,
-    ) -> Result<tonic::Response<ListPaymentsResponse>, tonic::Status> {
+    ) -> Result<Response<ListPaymentsResponse>, Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn list_phantom_payments(
+        &self,
+        request: tonic::Request<ListPhantomPaymentsRequest>,
+    ) -> Result<Response<ListPhantomPaymentsResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -253,7 +289,7 @@ impl Node for NodeService {
     async fn close_channel(
         &self,
         request: tonic::Request<CloseChannelRequest>,
-    ) -> Result<tonic::Response<CloseChannelResponse>, tonic::Status> {
+    ) -> Result<Response<CloseChannelResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -263,7 +299,7 @@ impl Node for NodeService {
     async fn info(
         &self,
         request: tonic::Request<InfoRequest>,
-    ) -> Result<tonic::Response<InfoResponse>, tonic::Status> {
+    ) -> Result<Response<InfoResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -273,7 +309,7 @@ impl Node for NodeService {
     async fn list_peers(
         &self,
         request: tonic::Request<ListPeersRequest>,
-    ) -> Result<tonic::Response<ListPeersResponse>, tonic::Status> {
+    ) -> Result<Response<ListPeersResponse>, Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()
@@ -283,7 +319,67 @@ impl Node for NodeService {
     async fn sign_message(
         &self,
         request: tonic::Request<SignMessageRequest>,
-    ) -> Result<tonic::Response<SignMessageResponse>, tonic::Status> {
+    ) -> Result<Response<SignMessageResponse>, Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn verify_message(
+        &self,
+        request: tonic::Request<VerifyMessageRequest>,
+    ) -> Result<Response<VerifyMessageResponse>, Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn list_unspent(
+        &self,
+        request: tonic::Request<ListUnspentRequest>,
+    ) -> Result<tonic::Response<ListUnspentResponse>, tonic::Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn network_graph_info(
+        &self,
+        request: tonic::Request<NetworkGraphInfoRequest>,
+    ) -> Result<tonic::Response<NetworkGraphInfoResponse>, tonic::Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn list_known_peers(
+        &self,
+        request: tonic::Request<ListKnownPeersRequest>,
+    ) -> Result<tonic::Response<ListKnownPeersResponse>, tonic::Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn add_known_peer(
+        &self,
+        request: tonic::Request<AddKnownPeerRequest>,
+    ) -> Result<tonic::Response<AddKnownPeerResponse>, tonic::Status> {
+        self.authenticated_request(request.metadata().clone(), request.into_inner().into())
+            .await?
+            .try_into()
+            .map(Response::new)
+            .map_err(|_e| Status::unknown("unknown error"))
+    }
+    async fn remove_known_peer(
+        &self,
+        request: tonic::Request<RemoveKnownPeerRequest>,
+    ) -> Result<tonic::Response<RemoveKnownPeerResponse>, tonic::Status> {
         self.authenticated_request(request.metadata().clone(), request.into_inner().into())
             .await?
             .try_into()

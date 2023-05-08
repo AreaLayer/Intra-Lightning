@@ -1,19 +1,19 @@
 {
   "name": "web-admin",
   "version": "0.2.0",
-  "homepage": "http://localhost:5401/admin",
+  "homepage": "http://localhost:5401/",
   "private": true,
   "dependencies": {
     "@headlessui/react": "^1.4.2",
     "@heroicons/react": "^1.0.5",
-    "@l2-technology/sensei-client": "^0.1.7",
+    "@l2-technology/sensei-client": "0.1.23",
     "@tailwindcss/aspect-ratio": "^0.4.0",
     "@tailwindcss/forms": "^0.4.0",
     "@tailwindcss/typography": "^0.5.0",
     "@testing-library/jest-dom": "^5.16.1",
-    "@testing-library/react": "^12.1.2",
+    "@testing-library/react": "^12.1.5",
     "@testing-library/user-event": "^13.5.0",
-    "@types/jest": "^27.0.3",
+    "@types/jest": "^29.4.0",
     "@types/node": "^16.11.13",
     "@types/react": "^17.0.37",
     "@types/react-dom": "^17.0.11",
@@ -30,7 +30,7 @@
     "prettier": "^2.5.1",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
-    "react-final-form": "^6.5.7",
+    "react-final-form": "^6.5.9",
     "react-final-form-arrays": "^3.1.3",
     "react-final-form-listeners": "^1.0.3",
     "react-intl": "^5.23.0",
@@ -41,7 +41,7 @@
     "react-scripts": "5.0.0",
     "typescript": "^4.5.4",
     "web-vitals": "^2.1.2",
-    "zod": "^3.11.6"
+    "zod": "^3.20.6"
   },
   "lint-staged": {
     "src/**/*.{js,jsx,ts,tsx,json,css,scss,md}": [
@@ -49,7 +49,7 @@
     ]
   },
   "scripts": {
-    "start": "react-scripts start",
+    "start": "cross-env PORT=3001 react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject",
@@ -65,7 +65,18 @@
     "extends": [
       "react-app",
       "react-app/jest"
-    ]
+    ],
+    "rules": {
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        {
+          "destructuredArrayIgnorePattern": "^_",
+          "varsIgnorePattern": "^_",
+          "argsIgnorePattern": "^_",
+          "ignoreRestSiblings": true
+        }
+      ]
+    }
   },
   "browserslist": {
     "production": [
@@ -81,7 +92,8 @@
   },
   "devDependencies": {
     "@formatjs/cli": "^4.5.0",
-    "autoprefixer": "^10.4.0",
+    "autoprefixer": "^10.4.13",
+    "cross-env": "^7.0.3",
     "postcss": "^8.4.5",
     "tailwindcss": "^3.0.5"
   }

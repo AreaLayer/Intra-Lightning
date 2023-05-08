@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use axum::{
     extract::{Extension, Query},
+    response::IntoResponse,
     routing::{delete, get, post},
     Json, Router,
 };
@@ -20,15 +21,15 @@ use http::{HeaderValue, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::{
+use senseicore::{
     services::{
-        admin::{AdminRequest, AdminResponse},
+        admin::{AdminRequest, AdminResponse, AdminService, Error, NodeCreateInfo},
         PaginationRequest,
     },
-    RequestContext,
+    utils,
 };
 
-use super::auth_header::AuthHeader;
+use super::{auth_header::AuthHeader, utils::get_macaroon_hex_str_from_cookies_or_header};
 
 #[derive(Deserialize)]
 pub struct DeleteNodeParams {
@@ -78,11 +79,37 @@ pub struct LoginNodeParams {
 }
 
 #[derive(Deserialize)]
+pub struct BatchCreateNodeParams {
+    nodes: Vec<CreateNodeParams>,
+}
+
+impl From<BatchCreateNodeParams> for AdminRequest {
+    fn from(params: BatchCreateNodeParams) -> Self {
+        Self::BatchCreateNode {
+            nodes: params
+                .nodes
+                .into_iter()
+                .map(|node| NodeCreateInfo {
+                    username: node.username,
+                    alias: node.alias,
+                    passphrase: node.passphrase,
+                    start: node.start,
+                    entropy: node.entropy,
+                    cross_node_entropy: node.cross_node_entropy,
+                })
+                .collect::<Vec<_>>(),
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct CreateNodeParams {
     pub username: String,
     pub passphrase: String,
     pub alias: String,
     pub start: bool,
+    pub entropy: Option<String>,
+    pub cross_node_entropy: Option<String>,
 }
 
 impl From<CreateNodeParams> for AdminRequest {
@@ -92,6 +119,120 @@ impl From<CreateNodeParams> for AdminRequest {
             passphrase: params.passphrase,
             alias: params.alias,
             start: params.start,
+            entropy: params.entropy,
+            cross_node_entropy: params.cross_node_entropy,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct ConnectGossipPeerParams {
+    node_connection_string: String,
+}
+
+impl From<ConnectGossipPeerParams> for AdminRequest {
+    fn from(params: ConnectGossipPeerParams) -> Self {
+        Self::ConnectGossipPeer {
+            node_connection_string: params.node_connection_string,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct FindRouteParams {
+    pub payer_public_key_hex: String,
+    pub route_params_hex: String,
+    pub payment_hash_hex: String,
+    pub first_hops: Vec<String>,
+    pub inflight_htlcs_hex: String,
+}
+
+impl From<FindRouteParams> for AdminRequest {
+    fn from(params: FindRouteParams) -> Self {
+        Self::FindRoute {
+            payer_public_key_hex: params.payer_public_key_hex,
+            route_params_hex: params.route_params_hex,
+            payment_hash_hex: params.payment_hash_hex,
+            first_hops: params.first_hops,
+            inflight_htlcs_hex: params.inflight_htlcs_hex,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct NodeInfoParams {
+    pub node_id_hex: String,
+}
+
+impl From<NodeInfoParams> for AdminRequest {
+    fn from(params: NodeInfoParams) -> Self {
+        Self::NodeInfo {
+            node_id_hex: params.node_id_hex,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PathSuccessfulParams {
+    pub path: Vec<String>,
+}
+
+impl From<PathSuccessfulParams> for AdminRequest {
+    fn from(params: PathSuccessfulParams) -> Self {
+        Self::PathSuccessful { path: params.path }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct PathFailedParams {
+    pub path: Vec<String>,
+    pub short_channel_id: u64,
+}
+
+impl From<PathFailedParams> for AdminRequest {
+    fn from(params: PathFailedParams) -> Self {
+        Self::PathFailed {
+            path: params.path,
+            short_channel_id: params.short_channel_id,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GossipNodeAnnouncementParams {
+    pub msg_hex: String,
+}
+
+impl From<GossipNodeAnnouncementParams> for AdminRequest {
+    fn from(params: GossipNodeAnnouncementParams) -> Self {
+        Self::GossipNodeAnnouncement {
+            msg_hex: params.msg_hex,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GossipChannelAnnouncementParams {
+    pub msg_hex: String,
+}
+
+impl From<GossipChannelAnnouncementParams> for AdminRequest {
+    fn from(params: GossipChannelAnnouncementParams) -> Self {
+        Self::GossipChannelAnnouncement {
+            msg_hex: params.msg_hex,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GossipChannelUpdateParams {
+    pub msg_hex: String,
+}
+
+impl From<GossipChannelUpdateParams> for AdminRequest {
+    fn from(params: GossipChannelUpdateParams) -> Self {
+        Self::GossipChannelUpdate {
+            msg_hex: params.msg_hex,
         }
     }
 }
@@ -117,7 +258,7 @@ impl From<CreateTokenParams> for AdminRequest {
 
 #[derive(Deserialize)]
 pub struct DeleteTokenParams {
-    pub id: u64,
+    pub id: String,
 }
 
 impl From<DeleteTokenParams> for AdminRequest {
@@ -130,29 +271,12 @@ impl From<DeleteTokenParams> for AdminRequest {
 pub struct CreateAdminParams {
     pub username: String,
     pub passphrase: String,
-    pub alias: String,
-    pub start: bool,
 }
 
 impl From<CreateAdminParams> for AdminRequest {
     fn from(params: CreateAdminParams) -> Self {
         Self::CreateAdmin {
             username: params.username,
-            passphrase: params.passphrase,
-            alias: params.alias,
-            start: params.start,
-        }
-    }
-}
-
-#[derive(Deserialize)]
-pub struct StartAdminParams {
-    pub passphrase: String,
-}
-
-impl From<StartAdminParams> for AdminRequest {
-    fn from(params: StartAdminParams) -> Self {
-        Self::StartAdmin {
             passphrase: params.passphrase,
         }
     }
@@ -181,32 +305,35 @@ pub fn get_token_from_cookies_or_header(
 }
 
 pub async fn authenticate_request(
-    request_context: &RequestContext,
+    admin_service: &AdminService,
     scope: &str,
     cookies: &Cookies,
     token: Option<HeaderValue>,
 ) -> Result<bool, StatusCode> {
-    let token = get_token_from_cookies_or_header(&cookies, token)?;
+    let token = get_token_from_cookies_or_header(cookies, token)?;
 
-    let access_token = {
-        let mut database = request_context.admin_service.database.lock().await;
-        database.get_access_token(token)
-    }
-    .map_err(|_e| StatusCode::UNAUTHORIZED)?;
+    let access_token = admin_service
+        .database
+        .get_access_token_by_token(token)
+        .await
+        .map_err(|_e| StatusCode::UNAUTHORIZED)?;
 
     match access_token {
         Some(access_token) => {
             if access_token.is_valid(Some(scope)) {
                 if access_token.single_use {
-                    let mut database = request_context.admin_service.database.lock().await;
-                    database.delete_access_token(access_token.id).unwrap();
+                    admin_service
+                        .database
+                        .delete_access_token(access_token.id)
+                        .await
+                        .unwrap();
                 }
                 Ok(true)
             } else {
                 Ok(false)
             }
         }
-        None => return Ok(false),
+        None => Ok(false),
     }
 }
 
@@ -215,6 +342,8 @@ pub fn add_routes(router: Router) -> Router {
         .route("/v1/init", post(init_sensei))
         .route("/v1/nodes", get(list_nodes))
         .route("/v1/nodes", post(create_node))
+        .route("/v1/nodes/login", post(login_node))
+        .route("/v1/nodes/batch", post(batch_create_nodes))
         .route("/v1/nodes/start", post(start_node))
         .route("/v1/nodes/stop", post(stop_node))
         .route("/v1/nodes/delete", post(delete_node))
@@ -222,22 +351,272 @@ pub fn add_routes(router: Router) -> Router {
         .route("/v1/tokens", post(create_token))
         .route("/v1/tokens", delete(delete_token))
         .route("/v1/status", get(get_status))
-        .route("/v1/start", post(start_sensei))
-        .route("/v1/login", post(login))
+        .route("/v1/login", post(login_admin))
         .route("/v1/logout", post(logout))
+        .route("/v1/peers/connect", post(connect_gossip_peer))
+        .route("/v1/chain/updated", post(chain_updated))
+        .route("/v1/ldk/network/route", post(find_route))
+        .route("/v1/ldk/network/path/successful", post(path_successful))
+        .route("/v1/ldk/network/path/failed", post(path_failed))
+        .route("/v1/ldk/network/node_info", post(node_info))
+        .route(
+            "/v1/ldk/network/gossip/node-announcement",
+            post(gossip_node_announcement),
+        )
+        .route(
+            "/v1/ldk/network/gossip/channel-announcement",
+            post(gossip_channel_announcement),
+        )
+        .route(
+            "/v1/ldk/network/gossip/channel-update",
+            post(gossip_channel_update),
+        )
+        .route("/v1/ldk/network/graph", get(get_network_graph))
+}
+
+pub async fn get_network_graph(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    if authenticated {
+        match admin_service.call(AdminRequest::GetNetworkGraph {}).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn connect_gossip_peer(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<ConnectGossipPeerParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn chain_updated(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "chain", &cookies, token).await?;
+
+    if authenticated {
+        match admin_service.call(AdminRequest::ChainUpdated {}).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn find_route(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<FindRouteParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn node_info(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<NodeInfoParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn path_successful(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<PathSuccessfulParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn path_failed(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<PathFailedParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn gossip_node_announcement(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<GossipNodeAnnouncementParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn gossip_channel_announcement(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<GossipChannelAnnouncementParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn gossip_channel_update(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon: _, token }: AuthHeader,
+) -> Result<Json<AdminResponse>, StatusCode> {
+    let authenticated = authenticate_request(&admin_service, "routing", &cookies, token).await?;
+    let request = {
+        let params: Result<GossipChannelUpdateParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
+    }?;
+
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+        }
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
 }
 
 pub async fn list_tokens(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     cookies: Cookies,
     Query(pagination): Query<PaginationRequest>,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
     let authenticated =
-        authenticate_request(&request_context, "tokens/list", &cookies, token).await?;
+        authenticate_request(&admin_service, "tokens/list", &cookies, token).await?;
     if authenticated {
-        match request_context
-            .admin_service
+        match admin_service
             .call(AdminRequest::ListTokens { pagination })
             .await
         {
@@ -250,13 +629,13 @@ pub async fn list_tokens(
 }
 
 pub async fn create_token(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     cookies: Cookies,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
     let authenticated =
-        authenticate_request(&request_context, "tokens/create", &cookies, token).await?;
+        authenticate_request(&admin_service, "tokens/create", &cookies, token).await?;
     let request = {
         let params: Result<CreateTokenParams, _> = serde_json::from_value(payload);
         match params {
@@ -266,7 +645,7 @@ pub async fn create_token(
     }?;
 
     if authenticated {
-        match request_context.admin_service.call(request).await {
+        match admin_service.call(request).await {
             Ok(response) => Ok(Json(response)),
             Err(_err) => Err(StatusCode::UNAUTHORIZED),
         }
@@ -276,13 +655,13 @@ pub async fn create_token(
 }
 
 pub async fn delete_token(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     cookies: Cookies,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
     let authenticated =
-        authenticate_request(&request_context, "tokens/delete", &cookies, token).await?;
+        authenticate_request(&admin_service, "tokens/delete", &cookies, token).await?;
     let request = {
         let params: Result<DeleteTokenParams, _> = serde_json::from_value(payload);
         match params {
@@ -292,7 +671,7 @@ pub async fn delete_token(
     }?;
 
     if authenticated {
-        match request_context.admin_service.call(request).await {
+        match admin_service.call(request).await {
             Ok(response) => Ok(Json(response)),
             Err(_err) => Err(StatusCode::UNAUTHORIZED),
         }
@@ -302,16 +681,14 @@ pub async fn delete_token(
 }
 
 pub async fn list_nodes(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     cookies: Cookies,
     Query(pagination): Query<PaginationRequest>,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
-    let authenticated =
-        authenticate_request(&request_context, "nodes/list", &cookies, token).await?;
+    let authenticated = authenticate_request(&admin_service, "nodes/list", &cookies, token).await?;
     if authenticated {
-        match request_context
-            .admin_service
+        match admin_service
             .call(AdminRequest::ListNodes { pagination })
             .await
         {
@@ -323,37 +700,63 @@ pub async fn list_nodes(
     }
 }
 
-pub async fn login(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+pub async fn login_admin(
+    Extension(admin_service): Extension<Arc<AdminService>>,
     cookies: Cookies,
     Json(payload): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
     let params: LoginNodeParams =
         serde_json::from_value(payload).map_err(|_e| StatusCode::UNPROCESSABLE_ENTITY)?;
 
-    let node = {
-        let mut database = request_context.admin_service.database.lock().await;
-        database
-            .get_node_by_username(params.username)
-            .map_err(|_e| StatusCode::UNPROCESSABLE_ENTITY)?
-    };
+    let admin_user = admin_service
+        .database
+        .verify_user(params.username, params.passphrase)
+        .await
+        .map_err(|_e| StatusCode::UNAUTHORIZED)?;
+    if admin_user {
+        let token = admin_service
+            .database
+            .get_root_access_token()
+            .await
+            .map_err(|_e| StatusCode::UNAUTHORIZED)?
+            .unwrap();
+        let token_cookie = Cookie::build("token", token.token.clone())
+            .http_only(true)
+            .finish();
+        cookies.add(token_cookie);
+        Ok(Json(json!({
+            "token": token.token
+        })))
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
+pub async fn login_node(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    cookies: Cookies,
+    Json(payload): Json<Value>,
+) -> Result<Json<Value>, StatusCode> {
+    let params: LoginNodeParams =
+        serde_json::from_value(payload).map_err(|_e| StatusCode::UNPROCESSABLE_ENTITY)?;
+
+    let node = admin_service
+        .database
+        .get_node_by_username(&params.username)
+        .await
+        .map_err(|_e| StatusCode::UNPROCESSABLE_ENTITY)?;
 
     match node {
         Some(node) => {
-            let request = match node.is_admin() {
-                true => AdminRequest::StartAdmin {
-                    passphrase: params.passphrase,
-                },
-                false => AdminRequest::StartNode {
-                    pubkey: node.pubkey.clone(),
-                    passphrase: params.passphrase,
-                },
+            let request = AdminRequest::StartNode {
+                pubkey: node.id.clone(),
+                passphrase: params.passphrase,
             };
-
-            match request_context.admin_service.call(request).await {
+            match admin_service.call(request).await {
                 Ok(response) => match response {
                     AdminResponse::StartNode { macaroon } => {
                         let macaroon_cookie = Cookie::build("macaroon", macaroon.clone())
+ more-umbrel-fixes
                             .http_only(true)
                             .finish();
                         cookies.add(macaroon_cookie);
@@ -377,11 +780,17 @@ pub async fn login(
                             .http_only(true)
                             .finish();
                         cookies.add(token_cookie);
+
+                            .path("/")
+                            .http_only(true)
+                            .finish();
+                        cookies.add(macaroon_cookie);
+ main
                         Ok(Json(json!({
-                            "pubkey": node.pubkey,
+                            "pubkey": node.id,
                             "alias": node.alias,
                             "macaroon": macaroon,
-                            "role": node.role,
+                            "role": node.role as u16
                         })))
                     }
                     _ => Err(StatusCode::UNPROCESSABLE_ENTITY),
@@ -400,18 +809,25 @@ pub async fn logout(cookies: Cookies) -> Result<Json<Value>, StatusCode> {
 }
 
 pub async fn init_sensei(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     cookies: Cookies,
     Json(payload): Json<Value>,
-) -> Result<Json<AdminResponse>, StatusCode> {
+) -> impl IntoResponse {
     let params: Result<CreateAdminParams, _> = serde_json::from_value(payload);
-    let request = match params {
-        Ok(params) => Ok(params.into()),
-        Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
-    }?;
 
-    match request_context.admin_service.call(request).await {
+    let request = match params {
+        Ok(params) => params.into(),
+        Err(_) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "invalid params"})),
+            )
+        }
+    };
+
+    match admin_service.call(request).await {
         Ok(response) => match response {
+ more-umbrel-fixes
             AdminResponse::CreateAdmin {
                 pubkey,
                 macaroon,
@@ -423,49 +839,58 @@ pub async fn init_sensei(
                     .http_only(true)
                     .finish();
 
+=======
+            AdminResponse::CreateAdmin { token } => {
+ main
                 let token_cookie = Cookie::build("token", token.clone())
                     .http_only(true)
                     .finish();
 
-                cookies.add(macaroon_cookie);
                 cookies.add(token_cookie);
-                Ok(Json(AdminResponse::CreateAdmin {
-                    pubkey,
-                    macaroon,
-                    external_id,
-                    role,
-                    token,
-                }))
+                (StatusCode::OK, Json(json!({ "token": token })))
             }
-            _ => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            _ => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({"error": "unexpected error"})),
+            ),
         },
-        Err(err) => Ok(Json(AdminResponse::Error(err))),
+        Err(err) => match err {
+            Error::Generic(msg) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(json!({ "error": msg })),
+            ),
+        },
     }
 }
 
+// this endpoint is overloaded and serves three purposes
+// 1) is the root node created or not
+// 2) is the node specified in my macaroon running?
+// 3) is my macaroon valid?
 pub async fn get_status(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     cookies: Cookies,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
-    let token = match get_token_from_cookies_or_header(&cookies, token) {
-        Ok(token) => token,
-        Err(e) => String::from(""),
+    let pubkey = {
+        match get_macaroon_hex_str_from_cookies_or_header(&cookies, macaroon) {
+            Ok(macaroon_hex) => match utils::macaroon_with_session_from_hex_str(&macaroon_hex) {
+                Ok((_macaroon, session)) => Some(session.pubkey),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        }
     };
 
-    let admin_token = {
-        let mut database = request_context.admin_service.database.lock().await;
-        database.get_admin_access_token().unwrap()
-    };
+    let authenticated_admin = authenticate_request(&admin_service, "*", &cookies, token)
+        .await
+        .unwrap_or(false);
 
-    let authenticated = match admin_token {
-        Some(access_token) => access_token.token == token,
-        None => false,
-    };
-
-    match request_context
-        .admin_service
-        .call(AdminRequest::GetStatus { authenticated })
+    match admin_service
+        .call(AdminRequest::GetStatus {
+            pubkey,
+            authenticated_admin,
+        })
         .await
     {
         Ok(response) => Ok(Json(response)),
@@ -473,17 +898,23 @@ pub async fn get_status(
     }
 }
 
-pub async fn start_sensei(
-    Extension(request_context): Extension<Arc<RequestContext>>,
-    cookies: Cookies,
+pub async fn create_node(
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
+    cookies: Cookies,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
-    let params: Result<StartAdminParams, _> = serde_json::from_value(payload);
-    let request = match params {
-        Ok(params) => Ok(params.into()),
-        Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+    let authenticated =
+        authenticate_request(&admin_service, "nodes/create", &cookies, token).await?;
+    let request = {
+        let params: Result<CreateNodeParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+        }
     }?;
 
+ more-umbrel-fixes
     match request {
         AdminRequest::StartAdmin { passphrase } => {
             match request_context
@@ -517,21 +948,28 @@ pub async fn start_sensei(
                 },
                 Err(_err) => Err(StatusCode::UNAUTHORIZED),
             }
+=======
+    if authenticated {
+        match admin_service.call(request).await {
+            Ok(response) => Ok(Json(response)),
+            Err(_err) => Err(StatusCode::UNAUTHORIZED),
+ main
         }
-        _ => Err(StatusCode::UNPROCESSABLE_ENTITY),
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
     }
 }
 
-pub async fn create_node(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+pub async fn batch_create_nodes(
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     cookies: Cookies,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
     let authenticated =
-        authenticate_request(&request_context, "nodes/create", &cookies, token).await?;
+        authenticate_request(&admin_service, "nodes/create/batch", &cookies, token).await?;
     let request = {
-        let params: Result<CreateNodeParams, _> = serde_json::from_value(payload);
+        let params: Result<BatchCreateNodeParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
             Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
@@ -539,7 +977,7 @@ pub async fn create_node(
     }?;
 
     if authenticated {
-        match request_context.admin_service.call(request).await {
+        match admin_service.call(request).await {
             Ok(response) => Ok(Json(response)),
             Err(_err) => Err(StatusCode::UNAUTHORIZED),
         }
@@ -549,13 +987,13 @@ pub async fn create_node(
 }
 
 pub async fn start_node(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     cookies: Cookies,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
     let authenticated =
-        authenticate_request(&request_context, "nodes/start", &cookies, token).await?;
+        authenticate_request(&admin_service, "nodes/start", &cookies, token).await?;
     let request = {
         let params: Result<StartNodeParams, _> = serde_json::from_value(payload);
         match params {
@@ -565,7 +1003,7 @@ pub async fn start_node(
     }?;
 
     if authenticated {
-        match request_context.admin_service.call(request).await {
+        match admin_service.call(request).await {
             Ok(response) => Ok(Json(response)),
             Err(_err) => Err(StatusCode::UNAUTHORIZED),
         }
@@ -575,13 +1013,12 @@ pub async fn start_node(
 }
 
 pub async fn stop_node(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     cookies: Cookies,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
-    let authenticated =
-        authenticate_request(&request_context, "nodes/stop", &cookies, token).await?;
+    let authenticated = authenticate_request(&admin_service, "nodes/stop", &cookies, token).await?;
     let request = {
         let params: Result<StopNodeParams, _> = serde_json::from_value(payload);
         match params {
@@ -591,7 +1028,7 @@ pub async fn stop_node(
     }?;
 
     if authenticated {
-        match request_context.admin_service.call(request).await {
+        match admin_service.call(request).await {
             Ok(response) => Ok(Json(response)),
             Err(_err) => Err(StatusCode::UNAUTHORIZED),
         }
@@ -601,13 +1038,13 @@ pub async fn stop_node(
 }
 
 pub async fn delete_node(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     cookies: Cookies,
-    AuthHeader { macaroon:_, token }: AuthHeader,
+    AuthHeader { macaroon: _, token }: AuthHeader,
 ) -> Result<Json<AdminResponse>, StatusCode> {
     let authenticated =
-        authenticate_request(&request_context, "nodes/delete", &cookies, token).await?;
+        authenticate_request(&admin_service, "nodes/delete", &cookies, token).await?;
     let request = {
         let params: Result<DeleteNodeParams, _> = serde_json::from_value(payload);
         match params {
@@ -617,7 +1054,7 @@ pub async fn delete_node(
     }?;
 
     if authenticated {
-        match request_context.admin_service.call(request).await {
+        match admin_service.call(request).await {
             Ok(response) => Ok(Json(response)),
             Err(_err) => Err(StatusCode::UNAUTHORIZED),
         }

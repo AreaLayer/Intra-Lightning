@@ -10,17 +10,23 @@
 use std::sync::Arc;
 
 use crate::http::auth_header::AuthHeader;
-use crate::services::admin::AdminRequest;
-use crate::services::node::{NodeRequest, NodeRequestError, NodeResponse};
-use crate::services::{ListChannelsParams, ListPaymentsParams, ListTransactionsParams};
-use crate::{utils, RequestContext};
+use crate::AdminService;
 use axum::extract::{Extension, Json, Query};
-use axum::routing::{get, post};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use http::{HeaderValue, StatusCode};
+use senseicore::services::admin::AdminRequest;
+use senseicore::services::node::{NodeRequest, NodeRequestError, NodeResponse, OpenChannelRequest};
+use senseicore::services::{
+    ListChannelsParams, ListKnownPeersParams, ListPaymentsParams, ListTransactionsParams,
+};
+use senseicore::utils;
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tower_cookies::Cookies;
+
+use super::utils::get_macaroon_hex_str_from_cookies_or_header;
 
 #[derive(Deserialize)]
 pub struct GetInvoiceParams {
@@ -33,6 +39,23 @@ impl From<GetInvoiceParams> for NodeRequest {
         Self::GetInvoice {
             amt_msat: params.amt_msat,
             description: params.description,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct GetPhantomInvoiceParams {
+    pub amt_msat: u64,
+    pub description: String,
+    pub phantom_route_hints_hex: Vec<String>,
+}
+
+impl From<GetPhantomInvoiceParams> for NodeRequest {
+    fn from(params: GetPhantomInvoiceParams) -> Self {
+        Self::GetPhantomInvoice {
+            amt_msat: params.amt_msat,
+            description: params.description,
+            phantom_route_hints_hex: params.phantom_route_hints_hex,
         }
     }
 }
@@ -66,18 +89,14 @@ impl From<DeletePaymentParams> for NodeRequest {
 }
 
 #[derive(Deserialize)]
-pub struct OpenChannelParams {
-    pub node_connection_string: String,
-    pub amt_satoshis: u64,
-    pub public: bool,
+pub struct BatchOpenChannelParams {
+    requests: Vec<OpenChannelRequest>,
 }
 
-impl From<OpenChannelParams> for NodeRequest {
-    fn from(params: OpenChannelParams) -> Self {
-        Self::OpenChannel {
-            node_connection_string: params.node_connection_string,
-            amt_satoshis: params.amt_satoshis,
-            public: params.public,
+impl From<BatchOpenChannelParams> for NodeRequest {
+    fn from(params: BatchOpenChannelParams) -> Self {
+        Self::OpenChannels {
+            requests: params.requests,
         }
     }
 }
@@ -90,6 +109,19 @@ pub struct SendPaymentParams {
 impl From<SendPaymentParams> for NodeRequest {
     fn from(params: SendPaymentParams) -> Self {
         Self::SendPayment {
+            invoice: params.invoice,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DecodeInvoiceParams {
+    pub invoice: String,
+}
+
+impl From<DecodeInvoiceParams> for NodeRequest {
+    fn from(params: DecodeInvoiceParams) -> Self {
+        Self::DecodeInvoice {
             invoice: params.invoice,
         }
     }
@@ -164,11 +196,61 @@ impl From<SignMessageParams> for NodeRequest {
     }
 }
 
+#[derive(Deserialize)]
+pub struct VerifyMessageParams {
+    pub message: String,
+    pub signature: String,
+}
+
+impl From<VerifyMessageParams> for NodeRequest {
+    fn from(params: VerifyMessageParams) -> Self {
+        Self::VerifyMessage {
+            message: params.message,
+            signature: params.signature,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct AddKnownPeerParams {
+    pub pubkey: String,
+    pub label: String,
+    pub zero_conf: bool,
+}
+
+impl From<AddKnownPeerParams> for NodeRequest {
+    fn from(params: AddKnownPeerParams) -> Self {
+        Self::AddKnownPeer {
+            pubkey: params.pubkey,
+            label: params.label,
+            zero_conf: params.zero_conf,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+pub struct RemoveKnownPeerParams {
+    pub pubkey: String,
+}
+
+impl From<RemoveKnownPeerParams> for NodeRequest {
+    fn from(params: RemoveKnownPeerParams) -> Self {
+        Self::RemoveKnownPeer {
+            pubkey: params.pubkey,
+        }
+    }
+}
+
 pub fn add_routes(router: Router) -> Router {
     router
         .route("/v1/node/payments", get(handle_get_payments))
+        .route(
+            "/v1/node/phantom-payments",
+            get(handle_get_phantom_payments),
+        )
         .route("/v1/node/wallet/address", get(get_unused_address))
         .route("/v1/node/wallet/balance", get(get_wallet_balance))
+        .route("/v1/node/wallet/utxos", get(list_unspent))
         .route("/v1/node/channels", get(get_channels))
         .route("/v1/node/transactions", get(get_transactions))
         .route("/v1/node/info", get(get_info))
@@ -176,23 +258,45 @@ pub fn add_routes(router: Router) -> Router {
         .route("/v1/node/stop", get(stop_node))
         .route("/v1/node/start", post(start_node))
         .route("/v1/node/invoices", post(create_invoice))
+        .route("/v1/node/invoices/phantom", post(create_phantom_invoice))
         .route("/v1/node/invoices/pay", post(pay_invoice))
+        .route("/v1/node/invoices/decode", post(decode_invoice))
         .route("/v1/node/payments/label", post(label_payment))
         .route("/v1/node/payments/delete", post(delete_payment))
-        .route("/v1/node/channels/open", post(open_channel))
+        .route("/v1/node/channels/open", post(open_channels))
         .route("/v1/node/channels/close", post(close_channel))
         .route("/v1/node/keysend", post(keysend))
         .route("/v1/node/peers/connect", post(connect_peer))
         .route("/v1/node/sign/message", post(sign_message))
+        .route("/v1/node/verify/message", post(verify_message))
+        .route("/v1/node/network-graph/info", get(network_graph_info))
+        .route("/v1/node/known-peers", get(list_known_peers))
+        .route("/v1/node/known-peers", post(add_known_peer))
+        .route("/v1/node/known-peers", delete(remove_known_peer))
+        .route("/v1/node/ldk/phantom-route-hints", get(phantom_route_hints))
+}
+
+pub async fn phantom_route_hints(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    handle_authenticated_request(
+        admin_service,
+        NodeRequest::GetPhantomRouteHints {},
+        macaroon,
+        cookies,
+    )
+    .await
 }
 
 pub async fn get_unused_address(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     handle_authenticated_request(
-        request_context,
+        admin_service,
         NodeRequest::GetUnusedAddress {},
         macaroon,
         cookies,
@@ -201,144 +305,145 @@ pub async fn get_unused_address(
 }
 
 pub async fn get_wallet_balance(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
-    handle_authenticated_request(
-        request_context,
-        NodeRequest::GetBalance {},
-        macaroon,
-        cookies,
-    )
-    .await
+) -> Result<Json<NodeResponse>, Response> {
+    handle_authenticated_request(admin_service, NodeRequest::GetBalance {}, macaroon, cookies).await
 }
 
 pub async fn handle_get_payments(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Query(params): Query<ListPaymentsParams>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = NodeRequest::ListPayments {
         pagination: params.clone().into(),
         filter: params.into(),
     };
 
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
+}
+
+pub async fn handle_get_phantom_payments(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    Query(params): Query<ListPaymentsParams>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    let request = NodeRequest::ListPhantomPayments {
+        pagination: params.clone().into(),
+        filter: params.into(),
+    };
+
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn get_channels(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Query(params): Query<ListChannelsParams>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = NodeRequest::ListChannels {
         pagination: params.clone().into(),
     };
 
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn get_transactions(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Query(params): Query<ListTransactionsParams>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = NodeRequest::ListTransactions {
         pagination: params.clone().into(),
     };
 
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn get_info(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
-    handle_authenticated_request(request_context, NodeRequest::NodeInfo {}, macaroon, cookies).await
+) -> Result<Json<NodeResponse>, Response> {
+    handle_authenticated_request(admin_service, NodeRequest::NodeInfo {}, macaroon, cookies).await
 }
 
 pub async fn get_peers(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
-    handle_authenticated_request(
-        request_context,
-        NodeRequest::ListPeers {},
-        macaroon,
-        cookies,
-    )
-    .await
+) -> Result<Json<NodeResponse>, Response> {
+    handle_authenticated_request(admin_service, NodeRequest::ListPeers {}, macaroon, cookies).await
 }
 
 pub async fn stop_node(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
-    handle_authenticated_request(request_context, NodeRequest::StopNode {}, macaroon, cookies).await
+) -> Result<Json<NodeResponse>, Response> {
+    handle_authenticated_request(admin_service, NodeRequest::StopNode {}, macaroon, cookies).await
 }
 
 pub async fn handle_authenticated_request(
-    request_context: Arc<RequestContext>,
+    admin_service: Arc<AdminService>,
     request: NodeRequest,
     macaroon: Option<HeaderValue>,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
-    let macaroon_hex_string = {
-        match macaroon {
-            Some(macaroon) => {
-                let res = macaroon
-                    .to_str()
-                    .map(|str| str.to_string())
-                    .map_err(|_| StatusCode::UNAUTHORIZED);
-                res
-            }
-            None => match cookies.get("macaroon") {
-                Some(macaroon_cookie) => {
-                    let macaroon_cookie_str = macaroon_cookie.value().to_string();
-                    Ok(macaroon_cookie_str)
-                }
-                None => Err(StatusCode::UNAUTHORIZED),
-            },
-        }
-    }?;
+) -> Result<Json<NodeResponse>, Response> {
+    let macaroon_hex_string = get_macaroon_hex_str_from_cookies_or_header(&cookies, macaroon)?;
 
     let (macaroon, session) = utils::macaroon_with_session_from_hex_str(&macaroon_hex_string)
-        .map_err(|_e| StatusCode::UNAUTHORIZED)?;
+        .map_err(|_e| (StatusCode::UNAUTHORIZED, "unauthorized").into_response())?;
 
     let pubkey = session.pubkey.clone();
-    let node_directory = request_context.node_directory.lock().await;
+    let node_directory = admin_service.node_directory.lock().await;
     let node = node_directory.get(&session.pubkey);
 
     match node {
-        Some(handle) => {
+        Some(Some(handle)) => {
             handle
                 .node
                 .verify_macaroon(macaroon, session)
                 .await
-                .map_err(|_e| StatusCode::UNAUTHORIZED)?;
+                .map_err(|_e| (StatusCode::UNAUTHORIZED, "unauthorized").into_response())?;
 
             match request {
                 NodeRequest::StopNode {} => {
                     let admin_request = AdminRequest::StopNode { pubkey };
-                    let _ = request_context
-                        .admin_service
-                        .call(admin_request)
-                        .await
-                        .map_err(|_e| StatusCode::UNPROCESSABLE_ENTITY)?;
+                    let _ = admin_service.call(admin_request).await.map_err(|_e| {
+                        (StatusCode::UNPROCESSABLE_ENTITY, "error").into_response()
+                    })?;
                     Ok(Json(NodeResponse::StopNode {}))
                 }
                 _ => match handle.node.call(request).await {
                     Ok(response) => Ok(Json(response)),
-                    Err(err) => Ok(Json(NodeResponse::Error(err))),
+                    Err(err) => {
+                        let error_message = match err {
+                            NodeRequestError::Sensei(e) => e,
+                            NodeRequestError::Bdk(e) => e,
+                            NodeRequestError::Io(e) => e,
+                        };
+
+                        let body = Json(json!({
+                            "error": error_message,
+                        }));
+
+                        Err((StatusCode::UNPROCESSABLE_ENTITY, body).into_response())
+                    }
                 },
             }
+        }
+        Some(None) => {
+            // TODO: rethink this Some(None) business
+            let err = senseicore::error::Error::Unauthenticated;
+            let node_request_error: NodeRequestError = err.into();
+            Ok(Json(NodeResponse::Error(node_request_error)))
         }
         None => match request {
             NodeRequest::StartNode { passphrase } => {
@@ -347,15 +452,14 @@ pub async fn handle_authenticated_request(
                     passphrase,
                     pubkey: session.pubkey,
                 };
-                let _ = request_context
-                    .admin_service
+                let _ = admin_service
                     .call(req)
                     .await
-                    .map_err(|_e| StatusCode::UNAUTHORIZED)?;
+                    .map_err(|_e| (StatusCode::UNAUTHORIZED, "unauthorized").into_response())?;
                 Ok(Json(NodeResponse::StartNode {}))
             }
             _ => {
-                let err = crate::error::Error::Unauthenticated;
+                let err = senseicore::error::Error::Unauthenticated;
                 let node_request_error: NodeRequestError = err.into();
                 Ok(Json(NodeResponse::Error(node_request_error)))
             }
@@ -364,161 +468,282 @@ pub async fn handle_authenticated_request(
 }
 
 pub async fn start_node(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<StartNodeParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn create_invoice(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<GetInvoiceParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
-pub async fn label_payment(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+pub async fn create_phantom_invoice(
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
+    let request = {
+        let params: Result<GetPhantomInvoiceParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
+        }
+    }?;
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
+}
+
+pub async fn label_payment(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<LabelPaymentParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn delete_payment(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<DeletePaymentParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn pay_invoice(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<SendPaymentParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
-pub async fn open_channel(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+pub async fn decode_invoice(
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
-        let params: Result<OpenChannelParams, _> = serde_json::from_value(payload);
+        let params: Result<DecodeInvoiceParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
+}
+
+pub async fn open_channels(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    let request = {
+        let params: Result<BatchOpenChannelParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
+        }
+    }?;
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn close_channel(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<CloseChannelParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn keysend(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<KeysendParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn connect_peer(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<ConnectPeerParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }
 
 pub async fn sign_message(
-    Extension(request_context): Extension<Arc<RequestContext>>,
+    Extension(admin_service): Extension<Arc<AdminService>>,
     Json(payload): Json<Value>,
     AuthHeader { macaroon, token: _ }: AuthHeader,
     cookies: Cookies,
-) -> Result<Json<NodeResponse>, StatusCode> {
+) -> Result<Json<NodeResponse>, Response> {
     let request = {
         let params: Result<SignMessageParams, _> = serde_json::from_value(payload);
         match params {
             Ok(params) => Ok(params.into()),
-            Err(_) => Err(StatusCode::UNPROCESSABLE_ENTITY),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
         }
     }?;
-    handle_authenticated_request(request_context, request, macaroon, cookies).await
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
+}
+
+pub async fn verify_message(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    let request = {
+        let params: Result<VerifyMessageParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
+        }
+    }?;
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
+}
+
+pub async fn list_unspent(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    handle_authenticated_request(
+        admin_service,
+        NodeRequest::ListUnspent {},
+        macaroon,
+        cookies,
+    )
+    .await
+}
+
+pub async fn network_graph_info(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    handle_authenticated_request(
+        admin_service,
+        NodeRequest::NetworkGraphInfo {},
+        macaroon,
+        cookies,
+    )
+    .await
+}
+
+pub async fn list_known_peers(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    Query(params): Query<ListKnownPeersParams>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    let request = NodeRequest::ListKnownPeers {
+        pagination: params.clone().into(),
+    };
+
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
+}
+
+pub async fn add_known_peer(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    let request = {
+        let params: Result<AddKnownPeerParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
+        }
+    }?;
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
+}
+
+pub async fn remove_known_peer(
+    Extension(admin_service): Extension<Arc<AdminService>>,
+    Json(payload): Json<Value>,
+    AuthHeader { macaroon, token: _ }: AuthHeader,
+    cookies: Cookies,
+) -> Result<Json<NodeResponse>, Response> {
+    let request = {
+        let params: Result<RemoveKnownPeerParams, _> = serde_json::from_value(payload);
+        match params {
+            Ok(params) => Ok(params.into()),
+            Err(_) => Err((StatusCode::UNPROCESSABLE_ENTITY, "invalid params").into_response()),
+        }
+    }?;
+    handle_authenticated_request(admin_service, request, macaroon, cookies).await
 }

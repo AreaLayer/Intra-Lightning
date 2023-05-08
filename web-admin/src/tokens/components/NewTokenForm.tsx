@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router";
-import { Form, FORM_ERROR, Input, Select } from "../../components/form";
-import * as z from "zod";
+import { Form, Input, Select } from "../../components/form";
+import { z } from "zod";
 import createAccessToken from "../mutations/createAccessToken";
 import addMinutes from "date-fns/addMinutes";
 
@@ -26,6 +26,7 @@ const NewTokenForm = () => {
       value: "nodes/create,nodes/list,nodes/delete,nodes/stop,nodes/start",
       text: "Node Management",
     },
+    { value: "routing", text: "Routing" },
   ];
 
   let expirationOptions = [
@@ -77,7 +78,7 @@ const NewTokenForm = () => {
         }
       }}
     >
-      <Input label="Name" name="name" />
+      <Input autoFocus label="Name" name="name" />
       <Select label="Scope" name="scope" options={scopeOptions} />
       <Select label="Expiration" name="expiresAt" options={expirationOptions} />
       <Select label="Usage Limit" name="singleUse" options={singleUseOptions} />

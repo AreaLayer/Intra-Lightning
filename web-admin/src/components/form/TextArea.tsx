@@ -28,9 +28,11 @@ export const TextArea = React.forwardRef<HTMLTextAreaElement, TextAreaProps>(
   ({ name, label, extraClass, outerProps, className, ...props }, ref) => {
     const {
       input,
-      meta: { touched, dirty, error, submitFailed, submitError, submitting },
+      meta: { dirty, error, submitFailed, submitError, submitting },
     } = useField(name);
 
+    let myOnChange = props.onChange ? (e) => {props.onChange(e); input.onChange(e) } : input.onChange;
+    
     const hasError = (dirty || submitFailed) && (error || submitError);
 
     return (
@@ -42,16 +44,17 @@ export const TextArea = React.forwardRef<HTMLTextAreaElement, TextAreaProps>(
             </label>
           </div>
         )}
-        <div className="mt-1 rounded-md shadow-sm ">
+        <div className="mt-1 rounded-xl shadow-sm ">
           <textarea
             {...input}
             disabled={submitting}
             {...props}
+            onChange={myOnChange}
             ref={ref}
-            className={`form-input block w-full bg-plum text-light-plum transition duration-150 ease-in-out sm:text-sm sm:leading-5 flex-1 ${
+            className={`form-input block border rounded-xl w-full bg-plum text-light-plum transition duration-150 ease-in-out sm:text-sm sm:leading-5 flex-1 ${
               hasError
-                ? "border-red-300 text-red-900 placeholder-red-300 focus:border-red-300 focus:ring-red"
-                : "border-gray-300 rounded"
+                ? "border-red-500 focus:border-red-500 focus:ring-red-500"
+                : "border-gray-plum-100 focus:border-orange  focus:ring-orange"
             } ${extraClass}`}
           ></textarea>
         </div>

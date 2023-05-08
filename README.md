@@ -1,10 +1,7 @@
-![Sensei Logo](./web-admin/public/images/sensei-logo.svg)
 
-### **WARNING: This software is in beta. Do not use it on mainnet until this warning is removed. Expect breaking changes to the api and database schema until the 0.1.0 release.**
+### **WARNING: This software is in beta. Please do not use it with a lot of funds.
 
-<br/>
-
-Sensei is a new lightning node implementation with a focus on easing the onboarding experience for users new to Bitcoin. It is built using the [bitcoin development kit](https://bitcoindevkit.org) and the [lightning development kit](https://lightningdevkit.org).
+LK is a new lightning node implementation with a focus on easing the onboarding experience for users new to Bitcoin. It is built using the [bitcoin development kit](https://bitcoindevkit.org) and the [lightning development kit](https://lightningdevkit.org).
 
 ## Dependencies
 
@@ -18,15 +15,36 @@ To run from source you will need to take the following steps:
 
 1. Clone the repo: `git clone git@github.com:L2-Technology/sensei.git`
 2. Build the web-admin: `cd sensei/web-admin && npm install && npm run build && cd ..`
-3. Run senseid on regtest: `cargo run --bin senseid -- --network=regtest --bitcoind-rpc-host=localhost --bitcoind-rpc-port=18443 --bitcoind-rpc-username=admin1 --bitcoind-rpc-password=123`
+3. Run senseid on regtest: `cargo run --bin senseid -- --network=regtest --bitcoind-rpc-host=localhost --bitcoind-rpc-port=18443 --bitcoind-rpc-username=admin1 --bitcoind-rpc-password=123 --database-url=sensei.db`
 4. Open the admin at `http://localhost:5401/admin/nodes`
+
+## Database Backends
+
+Sensei supports `sqlite`, `mysql`, and `postgres` databases.  You can configure what database to use by specifying a `DATABASE_URL` environment varilable or `--database-url` command line argument.
+
+### Sqlite
+
+For sqlite you just specify the filename to use for the database.  It will be saved in the Sensei data directory.
+
+Example: `--database-url=sensei.db`
+
+### Postgres & MySQL
+
+Sensei includes a `docker-compose.yml` file that can automatically run these databases for you locally.  Feel free to use these or just substitute the credentials to whatever database you already have.
+
+Starting docker based databases: `docker-compose up -d`
+
+Postgres Example: `--database-url=postgres://sensei:sensei@localhost:5432/sensei`
+MySQL Example: `--database-url=mysql://sensei:sensei@localhost:3306/sensei`
+
 
 ## Developing the web-admin
 
 In order to see your changes live you will need to:
 
-1. Run the web-admin dev server: `cd sensei/web-admin && npm install && npm run start`
-2. Visit the admin using port 3000: `http://localhost:3000/admin/nodes`
+1. Allow requests from local web-admin: `cargo run --bin senseid -- --network=regtest --bitcoind-rpc-host=localhost --bitcoind-rpc-port=18443 --bitcoind-rpc-username=admin1 --bitcoind-rpc-password=123 --allow-origins=http://localhost:3001`
+2. Run the web-admin dev server: `cd sensei/web-admin && npm install && npm run start`
+3. Visit the admin using port 3001: `http://localhost:3001/admin/nodes`
 
 ## Using with Nigiri
 
@@ -81,11 +99,3 @@ Some of the configuration options can be set using command line arguments or env
 These will have the highest precedence and overwrite the network specific configuration.
 
 instance > network > root
-
-## Documentation
-
-Please visit the [documentation website](https://docs.l2.technology) for installation and getting started instructions.
-
-## Community
-
-Please join [our discord community](https://discord.gg/bneS492Tqu) to discuss anything related to this project.

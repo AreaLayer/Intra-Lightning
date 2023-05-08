@@ -6,24 +6,39 @@ import copy from "copy-to-clipboard";
 import { useState } from "react";
 import StartNodeForm from "../components/StartNodeForm";
 import { useModal } from "../../contexts/modal";
-import { PlayIcon, StopIcon } from "@heroicons/react/outline";
+import {
+  PlayIcon,
+  StopIcon,
+  DotsHorizontalIcon,
+} from "@heroicons/react/outline";
 import { useConfirm } from "../../contexts/confirm";
 import adminStopNode from "../mutations/adminStopNode";
 import { useQueryClient } from "react-query";
-import { Link } from "react-router-dom";
-import { Node } from "@l2-technology/sensei-client"
+import { Node } from "@l2-technology/sensei-client";
+import Dropdown from "src/components/layout/app/Dropdown";
 
 const SimpleColumn = ({ value, className }) => {
   return (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       {value}
     </td>
   );
 };
 
-const ActionsColumn = ({ value, node, className }) => {
+const RoleColumn = ({ value, className }) => {
+  const displayRole = value === 0 ? "Root" : "Default";
+  return (
+    <td
+      className={`p-3 md:px-6 md:py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+    >
+      {displayRole}
+    </td>
+  );
+};
+
+const ActionsColumn = ({ node, className }) => {
   const { showModal, hideModal } = useModal();
   const { showConfirm } = useConfirm();
   const queryClient = useQueryClient();
@@ -35,7 +50,7 @@ const ActionsColumn = ({ value, node, className }) => {
 
   const startNodeClicked = async () => {
     showModal({
-      component: <StartNodeForm pubkey={node.pubkey} callback={nodeStarted} />,
+      component: <StartNodeForm pubkey={node.id} callback={nodeStarted} />,
     });
   };
 
@@ -46,53 +61,57 @@ const ActionsColumn = ({ value, node, className }) => {
         "A stopped node can no longer send, receive, or route payments.  The node will also no longer be monitoring the chain for misbehavior.",
       ctaText: "Yes, stop it",
       callback: async () => {
-        await adminStopNode(node.pubkey);
+        await adminStopNode(node.id);
         queryClient.invalidateQueries("nodes");
       },
     });
   };
 
+  const actionItems = [
+    {
+      label: node.status === 0 ? "start" : "stop",
+      icon:
+        node.status === 0 ? (
+          <PlayIcon className="w-6" />
+        ) : (
+          <StopIcon className="w-6" />
+        ),
+      onClick: node.status === 0 ? startNodeClicked : stopNodeClicked,
+      className: node.status === 0 ? "text-green-400" : "text-yellow-400",
+    },
+  ];
+
   return (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
-      {node.status === "Stopped" && (
-        <PlayIcon
-          className="inline-block h-6 cursor-pointer"
-          onClick={startNodeClicked}
-        />
-      )}
-      {node.status === "Running" && (
-        <StopIcon
-          className="inline-block h-6 cursor-pointer"
-          onClick={stopNodeClicked}
-        />
-      )}
-
-      <Link
-        to={`/admin/channels/open?connection=${node.pubkey}@127.0.0.1:${node.listenPort}`}
-      >
-        <PlusCircleIcon className="inline-block h-6 cursor-pointer" />
-      </Link>
+      <Dropdown
+        items={actionItems}
+        button={<DotsHorizontalIcon className="w-6" />}
+      />
     </td>
   );
 };
 
 const StatusColumn = ({ value, className }) => {
+  let dot = "bg-white";
+  let displayValue = "Stopped";
+
+  if (value === 1) {
+    dot = "bg-gradient-to-br from-green-400 to-green-700";
+    displayValue = "Running";
+  }
+
+  if (value === 0) dot = "bg-gradient-to-br from-yellow-400 to-yellow-700";
+
   return (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
-      {value === "Stopped" && (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-200 text-red-800">
-          Stopped
-        </span>
-      )}
-      {value === "Running" && (
-        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-          Running
-        </span>
-      )}
+      <div className="flex items-center justify-center md:justify-start">
+        <div className={`${dot} mr-2 h-4 w-4 rounded-full shadow-md`} />
+        <span className="capitalize hidden md:block">{displayValue}</span>
+      </div>
     </td>
   );
 };
@@ -101,7 +120,7 @@ const ConnectionInfoColumn = ({ node, value, className }) => {
   let [copied, setCopied] = useState(false);
 
   const copyClicked = () => {
-    copy(`${node.pubkey}@${node.listenAddr}:${node.listenPort}`);
+    copy(`${node.id}@${node.listenAddr}:${node.listenPort}`);
     setCopied(true);
     setTimeout(() => {
       setCopied(false);
@@ -110,7 +129,7 @@ const ConnectionInfoColumn = ({ node, value, className }) => {
 
   return copied ? (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       Copied! &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
       &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
@@ -122,7 +141,7 @@ const ConnectionInfoColumn = ({ node, value, className }) => {
   ) : (
     <td
       onClick={copyClicked}
-      className={`group cursor-pointer px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`group cursor-pointer p-3 md:px-6 md:py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       {value}{" "}
       <span className="inline-block group-hover:hidden">
@@ -138,11 +157,12 @@ const NodeRow = ({ result, extraClass, attributes }) => {
     status: StatusColumn,
     connectionInfo: ConnectionInfoColumn,
     actions: ActionsColumn,
+    role: RoleColumn,
   };
 
   return (
-    <tr className={`border-b border-plum-200 ${extraClass}`}>
-      {attributes.map(({ key, label, className }) => {
+    <tr className={`${extraClass}`}>
+      {attributes.map(({ key, className }) => {
         let value = result[key];
         let ColumnComponent = columnKeyComponentMap[key]
           ? columnKeyComponentMap[key]
@@ -190,6 +210,7 @@ const NodesListCard = () => {
     {
       key: "actions",
       label: "Actions",
+      className: "text-center",
     },
   ];
 
@@ -197,11 +218,9 @@ const NodesListCard = () => {
     return nodes.map((node) => {
       return {
         ...node,
-        role: node.role === 0 ? "Sensei" : "Child",
-        connectionInfo: `${truncateMiddle(node.pubkey, 10)}@${
-          "127.0.0.1"
+        connectionInfo: `${truncateMiddle(node.id, 10)}@${
+          node.listenAddr
         }:${node.listenPort}`,
-        status: node.status === 0 ? "Stopped" : "Running",
         actions: "Action",
       };
     });
@@ -213,8 +232,8 @@ const NodesListCard = () => {
     return {
       results: transformResults(response.nodes),
       hasMore: response.pagination.hasMore,
-      total: response.pagination.total
-    }
+      total: response.pagination.total,
+    };
   };
 
   return (
@@ -228,6 +247,7 @@ const NodesListCard = () => {
       hasHeader
       itemsPerPage={5}
       RowComponent={NodeRow}
+      striped={true}
     />
   );
 };

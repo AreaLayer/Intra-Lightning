@@ -7,13 +7,13 @@
 // You may not use this file except in accordance with one or both of these
 // licenses.
 
-mod hex_utils;
+use senseicore::hex_utils;
 use std::{
     fs::File,
     io::{self, Read},
 };
 
-use clap::{App, Arg};
+use clap::{Arg, Command};
 use sensei::GetBalanceRequest;
 use sensei::{admin_client::AdminClient, node_client::NodeClient};
 use tonic::{metadata::MetadataValue, transport::Channel, Request};
@@ -21,8 +21,9 @@ use tonic::{metadata::MetadataValue, transport::Channel, Request};
 use crate::sensei::{
     CloseChannelRequest, ConnectPeerRequest, CreateAdminRequest, CreateInvoiceRequest,
     CreateNodeRequest, GetUnusedAddressRequest, InfoRequest, KeysendRequest, ListChannelsRequest,
-    ListNodesRequest, ListPaymentsRequest, ListPeersRequest, OpenChannelRequest, PayInvoiceRequest,
-    SignMessageRequest, StartAdminRequest, StartNodeRequest,
+    ListNodesRequest, ListPaymentsRequest, ListPeersRequest, ListUnspentRequest,
+    NetworkGraphInfoRequest, OpenChannelRequest, OpenChannelsRequest, PayInvoiceRequest,
+    SignMessageRequest, StartNodeRequest,
 };
 
 pub mod sensei {
@@ -31,7 +32,7 @@ pub mod sensei {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let matches = App::new("senseicli")
+    let matches = Command::new("senseicli")
         .version("1.0")
         .author("John Cantrell <john@l2.technology>")
         .about("Control your sensei node from a cli")
@@ -52,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .takes_value(true),
         )
         .subcommand(
-            App::new("init")
+            Command::new("init")
                 .about("initialize your Sensei node")
                 .arg(
                     Arg::new("username")
@@ -65,12 +66,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .required(true)
                         .index(2)
                         .help("alias used for the root lightning node"),
-                )
+                ),
         )
-        .subcommand(App::new("start").about("unlock and start your sensei node"))
-        .subcommand(App::new("listnodes").about("list all the lightning nodes"))
+        .subcommand(Command::new("start").about("unlock and start your sensei node"))
+        .subcommand(Command::new("listnodes").about("list all the lightning nodes"))
         .subcommand(
-            App::new("createnode")
+            Command::new("createnode")
                 .about("create a new child node")
                 .arg(
                     Arg::new("username")
@@ -85,11 +86,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .help("alias to use for this lightning node"),
                 ),
         )
-        .subcommand(App::new("startnode").about("start a child lightning node"))
-        .subcommand(App::new("getbalance").about("gets wallet's balance"))
-        .subcommand(App::new("getaddress").about("get wallet's next unused address"))
+        .subcommand(Command::new("startnode").about("start a child lightning node"))
+        .subcommand(Command::new("getbalance").about("gets wallet's balance"))
+        .subcommand(Command::new("getaddress").about("get wallet's next unused address"))
         .subcommand(
-            App::new("createinvoice")
+            Command::new("createinvoice")
                 .about("create an invoice for an amount in msats")
                 .arg(
                     Arg::new("amt_msat")
@@ -99,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
         )
         .subcommand(
-            App::new("openchannel")
+            Command::new("openchannel")
                 .about("open a channel with another node")
                 .arg(
                     Arg::new("node_connection_string")
@@ -124,7 +125,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
         )
         .subcommand(
-            App::new("closechannel")
+            Command::new("closechannel")
                 .about("close a channel")
                 .arg(
                     Arg::new("channel_id")
@@ -143,7 +144,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
         )
         .subcommand(
-            App::new("payinvoice").about("pay an invoice").arg(
+            Command::new("payinvoice").about("pay an invoice").arg(
                 Arg::new("invoice")
                     .required(true)
                     .index(1)
@@ -151,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             ),
         )
         .subcommand(
-            App::new("keysend")
+            Command::new("keysend")
                 .about("send a payment to a public key")
                 .arg(
                     Arg::new("dest_pubkey")
@@ -167,7 +168,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
         )
         .subcommand(
-            App::new("connectpeer")
+            Command::new("connectpeer")
                 .about("connect to a peer on the lightning network")
                 .arg(
                     Arg::new("node_connection_string")
@@ -177,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
         )
         .subcommand(
-            App::new("signmessage")
+            Command::new("signmessage")
                 .about("sign a message with your nodes key")
                 .arg(
                     Arg::new("message")
@@ -186,10 +187,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .help("the message to be signed"),
                 ),
         )
-        .subcommand(App::new("listchannels").about("list channels"))
-        .subcommand(App::new("listpayments").about("list payments"))
-        .subcommand(App::new("listpeers").about("list payments"))
-        .subcommand(App::new("nodeinfo").about("see information about your node"))
+        .subcommand(Command::new("listchannels").about("list channels"))
+        .subcommand(Command::new("listpayments").about("list payments"))
+        .subcommand(Command::new("listpeers").about("list peers"))
+        .subcommand(Command::new("nodeinfo").about("see information about your node"))
         .get_matches();
 
     let (command, command_args) = matches.subcommand().unwrap();
@@ -201,17 +202,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mut admin_client = AdminClient::new(channel);
 
         let username = command_args.value_of("username").unwrap();
-        let alias = command_args.value_of("alias").unwrap();
-       
+
         let mut passphrase = String::new();
         print!("set a passphrase: ");
         io::stdin().read_line(&mut passphrase)?;
 
         let request = tonic::Request::new(CreateAdminRequest {
             username: username.to_string(),
-            alias: alias.to_string(),
             passphrase,
-            start: false,
         });
         let response = admin_client.create_admin(request).await?;
         println!("{:?}", response.into_inner());
@@ -250,15 +248,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             });
 
         match command {
-            "start" => {
-                let mut passphrase = String::new();
-                println!("enter your passphrase: ");
-                io::stdin().read_line(&mut passphrase)?;
-
-                let request = tonic::Request::new(StartAdminRequest { passphrase });
-                let response = admin_client.start_admin(request).await?;
-                println!("{:?}", response.into_inner());
-            }
             "listnodes" => {
                 let request = tonic::Request::new(ListNodesRequest { pagination: None });
                 let response = admin_client.list_nodes(request).await?;
@@ -277,6 +266,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     alias: alias.to_string(),
                     passphrase,
                     start: false,
+                    entropy: None,
+                    cross_node_entropy: None,
                 });
                 let response = admin_client.create_node(request).await?;
                 println!("{:?}", response.into_inner());
@@ -340,13 +331,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .parse()
                     .expect("public must be true or false");
 
-                let request = tonic::Request::new(OpenChannelRequest {
-                    node_connection_string: node_connection_string.to_string(),
-                    amt_satoshis,
-                    public,
+                let mut split = node_connection_string.split('@');
+                let pubkey = split.next().expect("you must provide pubkey@host:port");
+                let host_and_port = split.next().unwrap();
+                let request = tonic::Request::new(OpenChannelsRequest {
+                    requests: vec![OpenChannelRequest {
+                        counterparty_pubkey: pubkey.to_string(),
+                        amount_sats: amt_satoshis,
+                        public,
+                        scid_alias: None,
+                        push_amount_msats: None,
+                        custom_id: None,
+                        counterparty_host_port: Some(host_and_port.to_string()),
+                        forwarding_fee_proportional_millionths: None,
+                        forwarding_fee_base_msat: None,
+                        cltv_expiry_delta: None,
+                        max_dust_htlc_exposure_msat: None,
+                        force_close_avoidance_max_fee_satoshis: None,
+                    }],
                 });
 
-                let response = client.open_channel(request).await?;
+                let response = client.open_channels(request).await?;
                 println!("{:?}", response.into_inner());
             }
             "closechannel" => {
@@ -441,6 +446,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "listpeers" => {
                 let request = tonic::Request::new(ListPeersRequest {});
                 let response = client.list_peers(request).await?;
+                println!("{:?}", response.into_inner());
+            }
+            "listunspent" => {
+                let request = tonic::Request::new(ListUnspentRequest {});
+                let response = client.list_unspent(request).await?;
+                println!("{:?}", response.into_inner());
+            }
+            "networkgraphinfo" => {
+                let request = tonic::Request::new(NetworkGraphInfoRequest {});
+                let response = client.network_graph_info(request).await?;
                 println!("{:?}", response.into_inner());
             }
             "nodeinfo" => {

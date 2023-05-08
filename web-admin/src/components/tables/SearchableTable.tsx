@@ -4,30 +4,39 @@ import { Link } from "react-router-dom";
 import format from "date-fns/format";
 import { ReactNode, useEffect, useState } from "react";
 import { FormattedMessage } from "react-intl";
+import { SearchIcon } from "@heroicons/react/outline";
+import Spinner from "src/components/Spinner";
 
 export const SearchBar = ({ query = "", setQuery, placeholder, title }) => {
   return (
-    <div className="p-4 bg-plum-100 text-light-plum border-b border-plum-200 flex items-center justify-between">
+    <div className="p-4 bg-plum-100 text-light-plum flex items-center justify-between">
       {title && <span className="flex-grow-0 pr-4 font-bold">{title}</span>}
-      <input
-        className={` flex-grow-0 appearance-none border bg-plum focus:ring-blue-300 focus:border-blue-300 text-light-plum rounded py-2 px-3 text-leading-tight focus:outline-none ${
-          title ? "" : "w-full"
-        }`}
-        type="text"
-        value={query}
-        onChange={(e) => {
-          setQuery(e.target.value);
-        }}
-        placeholder={placeholder}
-      />
+      <div
+        className={`${
+          title ? "max-w-[300px]" : ""
+        } flex w-full items-center space-x-1 rounded-xl border border-transparent bg-plum-200 px-2 focus-within:border-orange focus-within:text-orange md:space-x-2 md:px-5`}
+      >
+        <span>
+          <SearchIcon className="w-5" />
+        </span>
+        <input
+          className="w-full border-none bg-transparent py-3 text-sm text-white outline-none placeholder:text-gray-300 focus:ring-0"
+          type="text"
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value);
+          }}
+          placeholder={placeholder}
+        />
+      </div>
     </div>
   );
 };
 
 export const SimpleRow = ({ result, extraClass, attributes }) => {
   return (
-    <tr className={`border-b border-plum-200 ${extraClass}`}>
-      {attributes.map(({ key, label, className }) => {
+    <tr className={`${extraClass}`}>
+      {attributes.map(({ key, className }) => {
         let value = result[key];
         if (typeof value === "object") {
           value = format(value, "MM/dd/YYY");
@@ -35,7 +44,7 @@ export const SimpleRow = ({ result, extraClass, attributes }) => {
         return (
           <td
             key={key}
-            className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+            className={`p-3 md:px-6 md:py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
           >
             {value}
           </td>
@@ -52,11 +61,11 @@ export const ResultRow = ({
   striped,
   RowComponent,
 }) => {
-  const bgColor = striped && index % 2 === 0 ? "bg-plum-100" : "bg-plum-300";
+  const bgColor = striped ? "even:bg-gray-accent2 odd:bg-gray-accent3" : "";
   const linkClass = result.link ? "cursor-pointer hover:bg-plum-50" : "";
 
   if (result.link) {
-    <Link to={result.link}>
+    <Link to={result.link} key={index}>
       <RowComponent
         result={result}
         extraClass={`${linkClass} ${bgColor}`}
@@ -96,7 +105,7 @@ export const SimpleTable = ({
     return <EmptyTable headline={headline} subtext={subtext} />;
   }
   return (
-    <table className="min-w-full divide-y divide-plum-200">
+    <table className="min-w-full">
       {hasHeader && (
         <thead>
           <tr>
@@ -104,7 +113,7 @@ export const SimpleTable = ({
               return (
                 <th
                   key={key}
-                  className={`px-6 py-3 bg-plum-100 text-left text-xs leading-4 font-medium text-plum-light uppercase tracking-wider ${className}`}
+                  className={`p-3 md:px-6 md:py-4 bg-plum-100 text-left text-xs leading-4 font-bold text-plum-light uppercase tracking-wider ${className}`}
                 >
                   {label}
                 </th>
@@ -141,9 +150,9 @@ export const TableNavigation = ({
   if (total === 0) {
     return null;
   }
-  const disabledClass = `opacity-50 cursor-auto`;
+
   return (
-    <nav className="bg-plum-100 px-4 py-3 flex items-center justify-between border-t border-plum-200 sm:px-6">
+    <nav className="bg-plum-100 px-4 py-3 flex items-center justify-between sm:px-6">
       <div className="hidden sm:block">
         <p className="text-sm leading-5 text-light-plum">
           <FormattedMessage
@@ -159,14 +168,8 @@ export const TableNavigation = ({
           />
         </p>
       </div>
-      <div className="flex-1 flex justify-between sm:justify-end">
-        <button
-          disabled={!canGoBack}
-          onClick={goBack}
-          className={`${
-            !canGoBack ? disabledClass : ""
-          } relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:ring-blue focus:border-blue-300 active:bg-gray-100 active:text-gray-700 transition ease-in-out duration-150`}
-        >
+      <div className="flex-1 flex justify-between space-x-2 sm:justify-end">
+        <button disabled={!canGoBack} onClick={goBack} className="btn-ghost">
           <FormattedMessage
             id="searchable-table-previous"
             defaultMessage="Previous"
@@ -176,9 +179,7 @@ export const TableNavigation = ({
         <button
           disabled={!canGoForward}
           onClick={goForward}
-          className={`${
-            !canGoForward ? disabledClass : ""
-          } ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm leading-5 font-medium rounded-md text-gray-700 bg-white hover:text-gray-500 focus:outline-none focus:ring-blue focus:border-blue-300 active:bg-gray-100 active:text-gray-700 transition ease-in-out duration-150`}
+          className="btn-ghost"
         >
           <FormattedMessage
             id="searchable-table-next"
@@ -215,6 +216,7 @@ interface SearchableTableProps<T> {
   searchBarTitle?: string | null;
   searchBarPlaceholder: string;
   RowComponent?: ReactNode;
+  refetchInterval?: number | false | ((data: any, query: any) => number | false);
 }
 
 const SimpleSearchableTable = <T extends object>({
@@ -230,6 +232,7 @@ const SimpleSearchableTable = <T extends object>({
   searchBarTitle = null,
   searchBarPlaceholder,
   RowComponent = SimpleRow,
+  refetchInterval = false
 }: SearchableTableProps<T>) => {
   const [page, setPage] = useState(0);
   const [searchTerm, setSearchTerm] = useState("");
@@ -244,11 +247,18 @@ const SimpleSearchableTable = <T extends object>({
   const { data, isLoading, isError } = useQuery(
     [queryKey, { page, searchTerm, skip, take }],
     queryFunction,
-    { keepPreviousData: true }
+    { 
+      keepPreviousData: true,
+      refetchInterval
+    }
   );
 
   if (isLoading) {
-    return <div>loading</div>;
+    return (
+      <div className="flex items-center justify-center p-4">
+        <Spinner />
+      </div>
+    );
   }
 
   if (isError) {
@@ -272,9 +282,9 @@ const SimpleSearchableTable = <T extends object>({
 
   return (
     <div className={`flex flex-col ${className}`}>
-      <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-        <div className="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
-          <div className="shadow overflow-hidden border-b border-plum-200 sm:rounded-lg">
+      <div className="">
+        <div className="inline-block min-w-full py-2 align-middle">
+          <div className="">
             <SearchBar
               query={searchTerm}
               setQuery={setSearchTerm}

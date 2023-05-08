@@ -1,36 +1,32 @@
 const authProvider = {
-  created: false,
-  running: false,
+  setup: false,
   macaroon: null,
+  token: null,
   alias: null,
-  create(alias: string, passphrase: string, callback: (any) => void) {
-    authProvider.created = true;
+  init(passphrase: string, callback: (any) => void) {
+    authProvider.setup = true;
     authProvider.macaroon = "secure";
-    authProvider.alias = alias;
     setTimeout(() => {
-      callback(authProvider.getStatus())
+      callback(authProvider.getStatus());
     }, 100);
   },
   start(passphrase: string, callback: (any) => void) {
-    authProvider.running = true;
     setTimeout(() => {
-      callback(authProvider.getStatus())
+      callback(authProvider.getStatus());
     }, 100); // fake async
   },
   stop(callback: (any) => void) {
-    authProvider.running = false;
     setTimeout(() => {
-      callback(authProvider.getStatus())
+      callback(authProvider.getStatus());
     }, 100);
   },
   getStatus() {
     return {
-      created: authProvider.created,
-      running: authProvider.running,
+      setup: authProvider.setup,
       macaroon: authProvider.macaroon,
-      alias: authProvider.alias
-    }
-  }
+      alias: authProvider.alias,
+    };
+  },
 };
 
 export { authProvider };

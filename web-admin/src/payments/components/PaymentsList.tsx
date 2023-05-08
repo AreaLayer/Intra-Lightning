@@ -2,92 +2,46 @@ import { truncateMiddle } from "../../utils/capitalize";
 import SearchableTable from "../../components/tables/SearchableTable";
 import getPayments from "../queries/getPayments";
 import labelPayment from "../mutations/labelPayment";
-import { useQueryClient } from "react-query";
 import copy from "copy-to-clipboard";
 import { Payment } from "@l2-technology/sensei-client";
-
 import { useState } from "react";
 import {
-  CheckIcon,
-  PencilAltIcon,
   ClipboardCopyIcon,
 } from "@heroicons/react/outline";
+import EditableLabelColumn from "src/components/tables/EditableLabelColumn";
 
-const EditLabelForm = ({ payment, setEditing }) => {
-  let queryClient = useQueryClient();
-  let [label, setLabel] = useState(payment.label || "");
-
-  async function handleSubmit(event: any) {
-    try {
-      await labelPayment(label, payment.paymentHash);
-      setEditing(false);
-      queryClient.invalidateQueries("payments");
-    } catch (e) {
-      // TODO: handle error
-    }
+const LabelColumn = ({ payment, value }) => {
+  
+  const updateLabel = async (newLabel) => {
+    await labelPayment(newLabel, payment.paymentHash);
   }
 
-  return (
-    <div className="flex align-middle items-center">
-      <input
-        type="text"
-        value={label}
-        onKeyPress={(e) => {
-          if (e.key === "Enter") {
-            handleSubmit(e);
-          }
-        }}
-        name="label"
-        className="h-6 text-sm w-32 border rounded"
-        onChange={(e) => {
-          setLabel(e.target.value);
-        }}
-      />
-      <CheckIcon
-        onClick={handleSubmit}
-        className="inline-block w-5 h-5 text-green-600 cursor-pointer"
-      />
-    </div>
-  );
+  return <EditableLabelColumn 
+    label={value} 
+    updateLabel={updateLabel} 
+    queryKey={"payments"} 
+  />
+  
 };
 
-const LabelColumn = ({ payment, value, className }) => {
-  let [editing, setEditing] = useState(false);
-
-  return editing ? (
-    <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
-    >
-      <EditLabelForm payment={payment} setEditing={setEditing} />
-    </td>
-  ) : (
-    <td
-      onClick={() => setEditing(true)}
-      className={`group cursor-pointer px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
-    >
-      {value}{" "}
-      <span className="inline-block group-hover:hidden">
-        &nbsp;&nbsp;&nbsp;&nbsp;
-      </span>
-      <PencilAltIcon className="w-4 h-4 cursor-pointer hidden group-hover:inline-block" />{" "}
-    </td>
-  );
-};
-
-const AmountColumn = ({ payment, value, className }) => {
+const AmountColumn = ({ value, className }) => {
   return (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4  whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       {new Intl.NumberFormat().format(value / 1000)}
     </td>
   );
 };
 
-const SimpleColumn = ({ payment, value, className }) => {
+const SimpleColumn = ({ value, className }) => {
+  if (new Date(value).getTime() > 0) {
+    value = new Date(value).toLocaleDateString("en-US");
+  }
+
   return (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4  whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       {value}
     </td>
@@ -97,7 +51,7 @@ const SimpleColumn = ({ payment, value, className }) => {
 const StatusColumn = ({ value, className }) => {
   return (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4  whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       {value === "pending" && (
         <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
@@ -132,7 +86,7 @@ const InvoiceColumn = ({ payment, value, className }) => {
   return !copied ? (
     <td
       onClick={copyClicked}
-      className={`group cursor-pointer px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`group cursor-pointer p-3 md:px-6 md:py-4  whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       {value}{" "}
       <span className="inline-block group-hover:hidden">
@@ -142,7 +96,7 @@ const InvoiceColumn = ({ payment, value, className }) => {
     </td>
   ) : (
     <td
-      className={`px-6 py-4 whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
+      className={`p-3 md:px-6 md:py-4  whitespace-nowrap text-sm leading-5 font-medium text-light-plum ${className}`}
     >
       Copied!
     </td>
@@ -158,8 +112,8 @@ const PaymentRow = ({ result, extraClass, attributes }) => {
   };
 
   return (
-    <tr className={`border-b border-plum-200 ${extraClass}`}>
-      {attributes.map(({ key, label, className }) => {
+    <tr className={`${extraClass}`}>
+      {attributes.map(({ key, className }) => {
         let value = result[key];
         let ColumnComponent = columnKeyComponentMap[key]
           ? columnKeyComponentMap[key]
@@ -213,15 +167,24 @@ const PaymentsList = ({ origin = "", status = "" }) => {
     return payments.map((payment) => {
       return {
         ...payment,
+        createdAt: payment.createdAt * 1000,
+        updatedAt: payment.updatedAt * 1000,
         displayPaymentHash: truncateMiddle(payment.paymentHash || "", 10),
         displayInvoice: truncateMiddle(payment.invoice || "", 10),
       };
     });
   };
 
+  const refetchInterval = (data, query) => {
+    const hasPendingPayment = data?.results.find(payment => {
+      return payment.status === "pending"
+    })
+    return hasPendingPayment ? 1000 : false
+  }
+
   const queryFunction = async ({ queryKey }) => {
     const [_key, { page, searchTerm, take }] = queryKey;
-    const {payments, pagination } = await getPayments({
+    const { payments, pagination } = await getPayments({
       page,
       searchTerm,
       take,
@@ -232,7 +195,7 @@ const PaymentsList = ({ origin = "", status = "" }) => {
     return {
       results: transformResults(payments),
       hasMore: pagination.hasMore,
-      total: pagination.total
+      total: pagination.total,
     };
   };
 
@@ -247,6 +210,7 @@ const PaymentsList = ({ origin = "", status = "" }) => {
       hasHeader
       itemsPerPage={5}
       RowComponent={PaymentRow}
+      refetchInterval={refetchInterval}
     />
   );
 };

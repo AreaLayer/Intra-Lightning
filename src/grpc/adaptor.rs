@@ -8,49 +8,50 @@
 // licenses.
 
 use super::sensei::{
-    Channel as ChannelMessage, DeletePaymentRequest, DeletePaymentResponse, Info as InfoMessage,
-    LabelPaymentRequest, LabelPaymentResponse, PaginationRequest, PaginationResponse,
-    Payment as PaymentMessage, PaymentsFilter, Peer as PeerMessage, StartNodeRequest,
-    StartNodeResponse, StopNodeRequest, StopNodeResponse,
+    self, AddKnownPeerRequest, AddKnownPeerResponse, Channel as ChannelMessage,
+    CreatePhantomInvoiceRequest, CreatePhantomInvoiceResponse, DeletePaymentRequest,
+    DeletePaymentResponse, GetPhantomRouteHintsRequest, GetPhantomRouteHintsResponse,
+    Info as InfoMessage, KnownPeer, LabelPaymentRequest, LabelPaymentResponse,
+    ListKnownPeersRequest, ListKnownPeersResponse, ListPhantomPaymentsRequest,
+    ListPhantomPaymentsResponse, NetworkGraphInfoRequest, NetworkGraphInfoResponse,
+    OpenChannelRequest as GrpcOpenChannelRequest, OpenChannelsRequest, OpenChannelsResponse,
+    PaginationRequest, PaginationResponse, Payment as PaymentMessage, PaymentsFilter,
+    Peer as PeerMessage, RemoveKnownPeerRequest, RemoveKnownPeerResponse, StartNodeRequest,
+    StartNodeResponse, StopNodeRequest, StopNodeResponse, Utxo as UtxoMessage,
 };
 
 use super::sensei::{
     CloseChannelRequest, CloseChannelResponse, ConnectPeerRequest, ConnectPeerResponse,
-    CreateInvoiceRequest, CreateInvoiceResponse, GetBalanceRequest, GetBalanceResponse,
-    GetUnusedAddressRequest, GetUnusedAddressResponse, InfoRequest, InfoResponse, KeysendRequest,
-    KeysendResponse, ListChannelsRequest, ListChannelsResponse, ListPaymentsRequest,
-    ListPaymentsResponse, ListPeersRequest, ListPeersResponse, OpenChannelRequest,
-    OpenChannelResponse, PayInvoiceRequest, PayInvoiceResponse, SignMessageRequest,
-    SignMessageResponse,
+    CreateInvoiceRequest, CreateInvoiceResponse, DecodeInvoiceRequest, DecodeInvoiceResponse,
+    GetBalanceRequest, GetBalanceResponse, GetUnusedAddressRequest, GetUnusedAddressResponse,
+    InfoRequest, InfoResponse, KeysendRequest, KeysendResponse, ListChannelsRequest,
+    ListChannelsResponse, ListPaymentsRequest, ListPaymentsResponse, ListPeersRequest,
+    ListPeersResponse, ListUnspentRequest, ListUnspentResponse, PayInvoiceRequest,
+    PayInvoiceResponse, SignMessageRequest, SignMessageResponse, VerifyMessageRequest,
+    VerifyMessageResponse,
 };
 
-use crate::database::node::Payment;
-use crate::services::{
+use senseicore::services::node::OpenChannelRequest;
+use senseicore::services::{
     self,
-    node::{Channel, NodeInfo, NodeRequest, NodeResponse, Peer},
+    node::{Channel, NodeInfo, NodeRequest, NodeResponse, Peer, Utxo},
 };
 
-impl From<Option<PaymentsFilter>> for services::PaymentsFilter {
-    fn from(filter: Option<PaymentsFilter>) -> Self {
-        match filter {
-            Some(filter) => Self {
-                origin: filter.origin,
-                status: filter.status,
-            },
-            None => Self::default(),
+impl From<PaymentsFilter> for services::PaymentsFilter {
+    fn from(filter: PaymentsFilter) -> Self {
+        Self {
+            origin: filter.origin,
+            status: filter.status,
         }
     }
 }
 
-impl From<Option<PaginationRequest>> for services::PaginationRequest {
-    fn from(pagination: Option<PaginationRequest>) -> Self {
-        match pagination {
-            Some(pagination) => Self {
-                take: pagination.take,
-                page: pagination.page,
-                query: pagination.query,
-            },
-            None => Self::default(),
+impl From<PaginationRequest> for services::PaginationRequest {
+    fn from(pagination: PaginationRequest) -> Self {
+        Self {
+            take: pagination.take,
+            page: pagination.page,
+            query: pagination.query,
         }
     }
 }
@@ -80,7 +81,7 @@ impl From<Channel> for ChannelMessage {
             confirmations_required: channel.confirmations_required,
             force_close_spend_delay: channel.force_close_spend_delay,
             is_outbound: channel.is_outbound,
-            is_funding_locked: channel.is_funding_locked,
+            is_channel_ready: channel.is_channel_ready,
             is_usable: channel.is_usable,
             is_public: channel.is_public,
             counterparty_pubkey: channel.counterparty_pubkey,
@@ -89,17 +90,21 @@ impl From<Channel> for ChannelMessage {
     }
 }
 
-impl From<Payment> for PaymentMessage {
-    fn from(payment: Payment) -> Self {
+impl From<entity::payment::Model> for PaymentMessage {
+    fn from(payment: entity::payment::Model) -> Self {
         Self {
+            node_id: payment.node_id,
             hash: payment.payment_hash,
             preimage: payment.preimage,
             secret: payment.secret,
             status: payment.status,
             amt_msat: payment.amt_msat,
+            fee_paid_msat: payment.fee_paid_msat,
             origin: payment.origin,
             label: payment.label,
             invoice: payment.invoice,
+            created_by_node_id: payment.created_by_node_id,
+            received_by_node_id: payment.received_by_node_id,
         }
     }
 }
@@ -107,6 +112,7 @@ impl From<Payment> for PaymentMessage {
 impl From<NodeInfo> for InfoMessage {
     fn from(info: NodeInfo) -> Self {
         Self {
+            version: info.version,
             node_pubkey: info.node_pubkey,
             num_channels: info.num_channels,
             num_usable_channels: info.num_usable_channels,
@@ -119,6 +125,17 @@ impl From<Peer> for PeerMessage {
     fn from(peer: Peer) -> Self {
         Self {
             node_pubkey: peer.node_pubkey,
+        }
+    }
+}
+
+impl From<Utxo> for UtxoMessage {
+    fn from(utxo: Utxo) -> Self {
+        Self {
+            amount_sat: utxo.amount_sat,
+            spk: utxo.spk,
+            txid: utxo.txid,
+            output_index: utxo.output_index,
         }
     }
 }
@@ -187,28 +204,91 @@ impl TryFrom<NodeResponse> for GetBalanceResponse {
 
     fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
         match res {
-            NodeResponse::GetBalance { balance_satoshis } => Ok(Self { balance_satoshis }),
+            NodeResponse::GetBalance {
+                onchain_balance_sats,
+                channel_balance_msats,
+                channel_outbound_capacity_msats,
+                channel_inbound_capacity_msats,
+                usable_channel_outbound_capacity_msats,
+                usable_channel_inbound_capacity_msats,
+            } => Ok(Self {
+                onchain_balance_sats,
+                channel_balance_msats,
+                channel_outbound_capacity_msats,
+                channel_inbound_capacity_msats,
+                usable_channel_outbound_capacity_msats,
+                usable_channel_inbound_capacity_msats,
+            }),
             _ => Err("impossible".to_string()),
         }
     }
 }
 
-impl From<OpenChannelRequest> for NodeRequest {
-    fn from(req: OpenChannelRequest) -> Self {
-        NodeRequest::OpenChannel {
-            node_connection_string: req.node_connection_string,
-            amt_satoshis: req.amt_satoshis,
-            public: req.public,
+impl From<OpenChannelsRequest> for NodeRequest {
+    fn from(req: OpenChannelsRequest) -> Self {
+        NodeRequest::OpenChannels {
+            requests: req
+                .requests
+                .into_iter()
+                .map(|request| OpenChannelRequest {
+                    counterparty_pubkey: request.counterparty_pubkey,
+                    amount_sats: request.amount_sats,
+                    public: request.public,
+                    scid_alias: request.scid_alias,
+                    custom_id: request.custom_id,
+                    push_amount_msats: request.push_amount_msats,
+                    counterparty_host_port: request.counterparty_host_port,
+                    forwarding_fee_proportional_millionths: request
+                        .forwarding_fee_proportional_millionths,
+                    forwarding_fee_base_msat: request.forwarding_fee_base_msat,
+                    cltv_expiry_delta: request
+                        .cltv_expiry_delta
+                        .map(|cltv_delta| cltv_delta as u16),
+                    max_dust_htlc_exposure_msat: request.max_dust_htlc_exposure_msat,
+                    force_close_avoidance_max_fee_satoshis: request
+                        .force_close_avoidance_max_fee_satoshis,
+                })
+                .collect::<Vec<_>>(),
         }
     }
 }
 
-impl TryFrom<NodeResponse> for OpenChannelResponse {
+impl TryFrom<NodeResponse> for OpenChannelsResponse {
     type Error = String;
 
     fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
         match res {
-            NodeResponse::OpenChannel {} => Ok(Self {}),
+            NodeResponse::OpenChannels { requests, results } => Ok(Self {
+                requests: requests
+                    .into_iter()
+                    .map(|request| GrpcOpenChannelRequest {
+                        counterparty_pubkey: request.counterparty_pubkey,
+                        amount_sats: request.amount_sats,
+                        public: request.public,
+                        scid_alias: request.scid_alias,
+                        custom_id: request.custom_id,
+                        push_amount_msats: request.push_amount_msats,
+                        counterparty_host_port: request.counterparty_host_port,
+                        forwarding_fee_proportional_millionths: request
+                            .forwarding_fee_proportional_millionths,
+                        forwarding_fee_base_msat: request.forwarding_fee_base_msat,
+                        cltv_expiry_delta: request
+                            .cltv_expiry_delta
+                            .map(|cltv_delta| cltv_delta.try_into().unwrap()),
+                        max_dust_htlc_exposure_msat: request.max_dust_htlc_exposure_msat,
+                        force_close_avoidance_max_fee_satoshis: request
+                            .force_close_avoidance_max_fee_satoshis,
+                    })
+                    .collect::<Vec<_>>(),
+                results: results
+                    .into_iter()
+                    .map(|result| sensei::OpenChannelResult {
+                        error: result.error,
+                        error_message: result.error_message,
+                        channel_id: result.channel_id,
+                    })
+                    .collect::<Vec<_>>(),
+            }),
             _ => Err("impossible".to_string()),
         }
     }
@@ -228,6 +308,27 @@ impl TryFrom<NodeResponse> for PayInvoiceResponse {
     fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
         match res {
             NodeResponse::SendPayment {} => Ok(Self {}),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<DecodeInvoiceRequest> for NodeRequest {
+    fn from(req: DecodeInvoiceRequest) -> Self {
+        NodeRequest::DecodeInvoice {
+            invoice: req.invoice,
+        }
+    }
+}
+
+impl TryFrom<NodeResponse> for DecodeInvoiceResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::DecodeInvoice { invoice } => Ok(Self {
+                invoice: Some(invoice.into()),
+            }),
             _ => Err("impossible".to_string()),
         }
     }
@@ -268,6 +369,48 @@ impl TryFrom<NodeResponse> for CreateInvoiceResponse {
     fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
         match res {
             NodeResponse::GetInvoice { invoice } => Ok(Self { invoice }),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<CreatePhantomInvoiceRequest> for NodeRequest {
+    fn from(req: CreatePhantomInvoiceRequest) -> Self {
+        NodeRequest::GetPhantomInvoice {
+            amt_msat: req.amt_msat,
+            description: req.description,
+            phantom_route_hints_hex: req.phantom_route_hints_hex,
+        }
+    }
+}
+
+impl TryFrom<NodeResponse> for CreatePhantomInvoiceResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::GetPhantomInvoice { invoice } => Ok(Self { invoice }),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<GetPhantomRouteHintsRequest> for NodeRequest {
+    fn from(_req: GetPhantomRouteHintsRequest) -> Self {
+        NodeRequest::GetPhantomRouteHints {}
+    }
+}
+
+impl TryFrom<NodeResponse> for GetPhantomRouteHintsResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::GetPhantomRouteHints {
+                phantom_route_hints_hex,
+            } => Ok(Self {
+                phantom_route_hints_hex,
+            }),
             _ => Err("impossible".to_string()),
         }
     }
@@ -334,7 +477,7 @@ impl TryFrom<NodeResponse> for ConnectPeerResponse {
 impl From<ListChannelsRequest> for NodeRequest {
     fn from(req: ListChannelsRequest) -> Self {
         NodeRequest::ListChannels {
-            pagination: req.pagination.into(),
+            pagination: req.pagination.map(|p| p.into()).unwrap_or_default(),
         }
     }
 }
@@ -365,8 +508,8 @@ impl TryFrom<NodeResponse> for ListChannelsResponse {
 impl From<ListPaymentsRequest> for NodeRequest {
     fn from(req: ListPaymentsRequest) -> Self {
         NodeRequest::ListPayments {
-            pagination: req.pagination.into(),
-            filter: req.filter.into(),
+            pagination: req.pagination.map(|p| p.into()).unwrap_or_default(),
+            filter: req.filter.map(|f| f.into()).unwrap_or_default(),
         }
     }
 }
@@ -377,6 +520,38 @@ impl TryFrom<NodeResponse> for ListPaymentsResponse {
     fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
         match res {
             NodeResponse::ListPayments {
+                payments,
+                pagination,
+            } => {
+                let pagination: PaginationResponse = pagination.into();
+                Ok(Self {
+                    payments: payments
+                        .into_iter()
+                        .map(|payment| payment.into())
+                        .collect::<Vec<PaymentMessage>>(),
+                    pagination: Some(pagination),
+                })
+            }
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<ListPhantomPaymentsRequest> for NodeRequest {
+    fn from(req: ListPhantomPaymentsRequest) -> Self {
+        NodeRequest::ListPhantomPayments {
+            pagination: req.pagination.map(|p| p.into()).unwrap_or_default(),
+            filter: req.filter.map(|f| f.into()).unwrap_or_default(),
+        }
+    }
+}
+
+impl TryFrom<NodeResponse> for ListPhantomPaymentsResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::ListPhantomPayments {
                 payments,
                 pagination,
             } => {
@@ -469,6 +644,149 @@ impl TryFrom<NodeResponse> for SignMessageResponse {
     fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
         match res {
             NodeResponse::SignMessage { signature } => Ok(Self { signature }),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<VerifyMessageRequest> for NodeRequest {
+    fn from(req: VerifyMessageRequest) -> Self {
+        NodeRequest::VerifyMessage {
+            message: req.message,
+            signature: req.signature,
+        }
+    }
+}
+
+impl TryFrom<NodeResponse> for VerifyMessageResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::VerifyMessage { valid, pubkey } => Ok(Self { valid, pubkey }),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<ListUnspentRequest> for NodeRequest {
+    fn from(_req: ListUnspentRequest) -> Self {
+        NodeRequest::ListUnspent {}
+    }
+}
+
+impl TryFrom<NodeResponse> for ListUnspentResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::ListUnspent { utxos } => Ok(Self {
+                utxos: utxos
+                    .into_iter()
+                    .map(|utxo| utxo.into())
+                    .collect::<Vec<UtxoMessage>>(),
+            }),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<NetworkGraphInfoRequest> for NodeRequest {
+    fn from(_req: NetworkGraphInfoRequest) -> Self {
+        NodeRequest::NetworkGraphInfo {}
+    }
+}
+
+impl TryFrom<NodeResponse> for NetworkGraphInfoResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::NetworkGraphInfo {
+                num_channels,
+                num_nodes,
+                num_known_edge_policies,
+            } => Ok(Self {
+                num_channels,
+                num_nodes,
+                num_known_edge_policies,
+            }),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<entity::peer::Model> for KnownPeer {
+    fn from(peer: entity::peer::Model) -> Self {
+        Self {
+            pubkey: peer.pubkey,
+            label: peer.label,
+            zero_conf: peer.zero_conf,
+        }
+    }
+}
+
+impl From<ListKnownPeersRequest> for NodeRequest {
+    fn from(req: ListKnownPeersRequest) -> Self {
+        NodeRequest::ListKnownPeers {
+            pagination: req.pagination.map(|p| p.into()).unwrap_or_default(),
+        }
+    }
+}
+
+impl TryFrom<NodeResponse> for ListKnownPeersResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::ListKnownPeers { peers, pagination } => {
+                let pagination: PaginationResponse = pagination.into();
+                Ok(Self {
+                    peers: peers
+                        .into_iter()
+                        .map(|peer| peer.into())
+                        .collect::<Vec<_>>(),
+                    pagination: Some(pagination),
+                })
+            }
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<AddKnownPeerRequest> for NodeRequest {
+    fn from(req: AddKnownPeerRequest) -> Self {
+        NodeRequest::AddKnownPeer {
+            pubkey: req.pubkey,
+            label: req.label,
+            zero_conf: req.zero_conf,
+        }
+    }
+}
+
+impl TryFrom<NodeResponse> for AddKnownPeerResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::AddKnownPeer {} => Ok(Self {}),
+            _ => Err("impossible".to_string()),
+        }
+    }
+}
+
+impl From<RemoveKnownPeerRequest> for NodeRequest {
+    fn from(req: RemoveKnownPeerRequest) -> Self {
+        NodeRequest::RemoveKnownPeer { pubkey: req.pubkey }
+    }
+}
+
+impl TryFrom<NodeResponse> for RemoveKnownPeerResponse {
+    type Error = String;
+
+    fn try_from(res: NodeResponse) -> Result<Self, Self::Error> {
+        match res {
+            NodeResponse::RemoveKnownPeer {} => Ok(Self {}),
             _ => Err("impossible".to_string()),
         }
     }

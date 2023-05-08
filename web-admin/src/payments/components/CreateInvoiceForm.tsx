@@ -1,13 +1,13 @@
-import { useNavigate } from "react-router";
 import createInvoice from "../mutations/createInvoice";
 import { Form, Input } from "../../components/form";
 import { useQueryClient } from "react-query";
-import * as z from "zod";
+import { z } from "zod";
 import { useNotification } from "../../contexts/notification";
 import copy from "copy-to-clipboard";
+import { InboxIcon } from "@heroicons/react/outline";
 
 export const CreateInvoiceInput = z.object({
-  amountMillisats: z.string(),
+  amountSats: z.string(),
   description: z.string(),
 });
 
@@ -15,7 +15,7 @@ const NewInvoiceNotification = ({ invoice }) => {
   const { hideNotification } = useNotification();
 
   return (
-    <>
+    <div className="">
       <p className="text-sm font-medium text-gray-50">Invoice Created</p>
       <p className="mt-1 text-sm text-light-plum">
         Easily copy invoice to clipboard or dismiss and find it later below
@@ -27,19 +27,19 @@ const NewInvoiceNotification = ({ invoice }) => {
             copy(invoice);
             hideNotification();
           }}
-          className="bg-plum-50 p-1 text-light-plum rounded-md text-sm font-medium  focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          className="btn-ghost text-sm"
         >
           Copy
         </button>
         <button
           type="button"
           onClick={hideNotification}
-          className="bg-plum-50 p-1 text-light-plum  rounded-md text-sm font-medium  hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+          className="btn-ghost text-sm"
         >
           Dismiss
         </button>
       </div>
-    </>
+    </div>
   );
 };
 
@@ -54,11 +54,11 @@ const CreateInvoiceForm = () => {
       noticePosition="top"
       layout="default"
       resetAfterSuccess={true}
-      initialValues={{ description: "", amountMillisats: "" }}
-      onSubmit={async ({ description, amountMillisats }) => {
+      initialValues={{ description: "", amountSats: "" }}
+      onSubmit={async ({ description, amountSats }) => {
         try {
           const { invoice } = await createInvoice(
-            parseInt(amountMillisats, 10),
+            parseInt(amountSats, 10) * 1000,
             description
           );
 
@@ -66,14 +66,20 @@ const CreateInvoiceForm = () => {
 
           showNotification({
             component: <NewInvoiceNotification invoice={invoice} />,
+            iconComponent: <InboxIcon className="h-6 w-6 text-light-plum" aria-hidden="true"/>
           });
         } catch (e) {
           // TODO: handle error
         }
       }}
     >
-      <Input label="Description" name="description" />
-      <Input label="Amount Millisats" name="amountMillisats" type="number" />
+      <Input autoFocus label="Description" name="description" />
+      <Input
+        min={1}
+        label="Amount Sats"
+        name="amountSats"
+        type="number"
+      />
     </Form>
   );
 };

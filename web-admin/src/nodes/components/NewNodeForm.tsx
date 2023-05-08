@@ -1,8 +1,7 @@
 import { useNavigate } from "react-router";
 import createNode from "../mutations/createNode";
-import { Form, FORM_ERROR, Input } from "../../components/form";
-import * as z from "zod";
-import startNode from "../mutations/startNode";
+import { Form, Input } from "../../components/form";
+import { z } from "zod";
 
 export const CreateNodeInput = z.object({
   username: z.string(),
@@ -28,7 +27,7 @@ const NewNodeForm = () => {
         }
       }}
     >
-      <Input label="Username" name="username" />
+      <Input autoFocus label="Username" name="username" />
       <Input label="Alias" name="alias" />
       <Input label="Passphrase" name="passphrase" type="password" />
     </Form>
