@@ -43,8 +43,11 @@ pub struct SenseiConfig {
     pub http_notifier_url: Option<String>,
     pub http_notifier_token: Option<String>,
     pub region: Option<String>,
+ remote-bitcoind
+
     pub poll_for_chain_updates: bool,
     pub rapid_gossip_sync_server_host: Option<String>,
+ main
 }
 
 impl Default for SenseiConfig {
@@ -72,8 +75,11 @@ impl Default for SenseiConfig {
             http_notifier_url: None,
             http_notifier_token: None,
             region: None,
+ remote-bitcoind
+
             poll_for_chain_updates: true,
             rapid_gossip_sync_server_host: None,
+ main
         }
     }
 }

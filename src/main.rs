@@ -104,12 +104,15 @@ struct SenseiArgs {
     http_notifier_token: Option<String>,
     #[clap(long, env = "REGION")]
     region: Option<String>,
+ remote-bitcoind
+
     #[clap(long, env = "POLL_FOR_CHAIN_UPDATES")]
     poll_for_chain_updates: Option<bool>,
     #[clap(long, env = "ALLOW_ORIGINS")]
     allow_origins: Option<Vec<String>>,
     #[clap(long, env = "RAPID_GOSSIP_SYNC_SERVER_HOST")]
     rapid_gossip_sync_server_host: Option<String>,
+ main
 }
 
 pub type AdminRequestResponse = (AdminRequest, Sender<AdminResponse>);
@@ -199,12 +202,15 @@ fn main() {
     if let Some(region) = args.region {
         config.region = Some(region)
     }
+ remote-bitcoind
+
     if let Some(poll_for_chain_updates) = args.poll_for_chain_updates {
         config.poll_for_chain_updates = poll_for_chain_updates
     }
     if let Some(rapid_gossip_sync_server_host) = args.rapid_gossip_sync_server_host {
         config.rapid_gossip_sync_server_host = Some(rapid_gossip_sync_server_host)
     }
+ main
 
     if !config.database_url.starts_with("postgres:") && !config.database_url.starts_with("mysql:") {
         let sqlite_path = format!("{}/{}/{}", sensei_dir, config.network, config.database_url);
@@ -392,6 +398,8 @@ fn main() {
             }
         }
 
+ remote-bitcoind
+
  more-umbrel-fixes
     let http_service = router
         .layer(CookieManagerLayer::new())
@@ -419,6 +427,7 @@ fn main() {
     if let Err(e) = server.await {
         eprintln!("server error: {}", e);
     }
+ main
         let _res = event_sender.send(SenseiEvent::InstanceStopped {
             instance_name: config.instance_name.clone(),
             api_host: config.api_host.clone(),
