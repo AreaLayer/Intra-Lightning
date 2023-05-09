@@ -1,10 +1,7 @@
-![Sensei Logo](./web-admin/public/images/sensei-logo.svg)
 
 ### **WARNING: This software is in beta. Please do not use it with a lot of funds.
 
-<br/>
-
-Sensei is a new lightning node implementation with a focus on easing the onboarding experience for users new to Bitcoin. It is built using the [bitcoin development kit](https://bitcoindevkit.org) and the [lightning development kit](https://lightningdevkit.org).
+LK is a new lightning node implementation with a focus on easing the onboarding experience for users new to Bitcoin. It is built using the [bitcoin development kit](https://bitcoindevkit.org) and the [lightning development kit](https://lightningdevkit.org).
 
 ## Dependencies
 
@@ -45,7 +42,7 @@ MySQL Example: `--database-url=mysql://sensei:sensei@localhost:3306/sensei`
 
 In order to see your changes live you will need to:
 
-1. Run sensei in development mode: `cargo run --bin senseid -- --development-mode=true --network=regtest --bitcoind-rpc-host=localhost --bitcoind-rpc-port=18443 --bitcoind-rpc-username=admin1 --bitcoind-rpc-password=123`
+1. Allow requests from local web-admin: `cargo run --bin senseid -- --network=regtest --bitcoind-rpc-host=localhost --bitcoind-rpc-port=18443 --bitcoind-rpc-username=admin1 --bitcoind-rpc-password=123 --allow-origins=http://localhost:3001`
 2. Run the web-admin dev server: `cd sensei/web-admin && npm install && npm run start`
 3. Visit the admin using port 3001: `http://localhost:3001/admin/nodes`
 
@@ -102,11 +99,3 @@ Some of the configuration options can be set using command line arguments or env
 These will have the highest precedence and overwrite the network specific configuration.
 
 instance > network > root
-
-## Documentation
-
-Please visit the [documentation website](https://docs.l2.technology) for installation and getting started instructions.
-
-## Community
-
-Please join [our discord community](https://discord.gg/bneS492Tqu) to discuss anything related to this project.

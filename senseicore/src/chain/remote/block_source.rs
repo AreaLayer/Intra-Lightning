@@ -6,7 +6,11 @@ use bitcoin::{
     Block, BlockHash, BlockHeader, Network,
 };
 use lightning::chain::BestBlock;
+ remote-bitcoind
 use lightning_block_sync::{BlockHeaderData, BlockSource, BlockSourceError};
+
+use lightning_block_sync::{BlockData, BlockHeaderData, BlockSource, BlockSourceError};
+ main
 
 pub struct RemoteBlockSource {
     network: Network,
@@ -123,7 +127,11 @@ impl BlockSource for RemoteBlockSource {
     fn get_block<'a>(
         &'a self,
         header_hash: &'a bitcoin::BlockHash,
+ remote-bitcoind
     ) -> lightning_block_sync::AsyncBlockSourceResult<'a, bitcoin::Block> {
+
+    ) -> lightning_block_sync::AsyncBlockSourceResult<'a, BlockData> {
+ main
         Box::pin(async move {
             let client = reqwest::Client::new();
             let res = client
@@ -136,7 +144,11 @@ impl BlockSource for RemoteBlockSource {
                 Ok(response) => match response.bytes().await {
                     Ok(serialized_block_data) => {
                         let block: Block = deserialize(&serialized_block_data).unwrap();
+ remote-bitcoind
                         Ok(block)
+
+                        Ok(BlockData::FullBlock(block))
+ main
                     }
                     Err(e) => Err(BlockSourceError::transient(e)),
                 },

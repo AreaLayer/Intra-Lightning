@@ -13,6 +13,13 @@ use bitcoin::Network;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+#[derive(Clone)]
+pub enum P2PConfig {
+    Local,
+    Remote(String, String),
+    RapidGossipSync(String),
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct SenseiConfig {
     #[serde(skip)]
@@ -24,7 +31,6 @@ pub struct SenseiConfig {
     pub network: Network,
     pub api_host: String,
     pub api_port: u16,
-    pub root_node_port: u16,
     pub port_range_min: u16,
     pub port_range_max: u16,
     pub database_url: String,
@@ -37,6 +43,11 @@ pub struct SenseiConfig {
     pub http_notifier_url: Option<String>,
     pub http_notifier_token: Option<String>,
     pub region: Option<String>,
+ remote-bitcoind
+
+    pub poll_for_chain_updates: bool,
+    pub rapid_gossip_sync_server_host: Option<String>,
+ main
 }
 
 impl Default for SenseiConfig {
@@ -52,7 +63,6 @@ impl Default for SenseiConfig {
             network: Network::Bitcoin,
             api_host: String::from("127.0.0.1"),
             api_port: 5401,
-            root_node_port: 9735,
             port_range_min: 10000,
             port_range_max: 65535,
             database_url: String::from("sensei.db"),
@@ -65,6 +75,11 @@ impl Default for SenseiConfig {
             http_notifier_url: None,
             http_notifier_token: None,
             region: None,
+ remote-bitcoind
+
+            poll_for_chain_updates: true,
+            rapid_gossip_sync_server_host: None,
+ main
         }
     }
 }
@@ -115,5 +130,26 @@ impl SenseiConfig {
             serde_json::to_string(&self).expect("failed to serialize config"),
         )
         .expect("failed to write config");
+    }
+
+    pub fn get_p2p_config(&self) -> P2PConfig {
+        if self.remote_p2p_configured() {
+            P2PConfig::Remote(
+                self.remote_p2p_host.as_ref().unwrap().clone(),
+                self.remote_p2p_token.as_ref().unwrap().clone(),
+            )
+        } else if self.rapid_gossip_sync_configured() {
+            P2PConfig::RapidGossipSync(self.rapid_gossip_sync_server_host.as_ref().unwrap().clone())
+        } else {
+            P2PConfig::Local
+        }
+    }
+
+    pub fn remote_p2p_configured(&self) -> bool {
+        self.remote_p2p_host.is_some() && self.remote_p2p_token.is_some()
+    }
+
+    pub fn rapid_gossip_sync_configured(&self) -> bool {
+        self.rapid_gossip_sync_server_host.is_some()
     }
 }

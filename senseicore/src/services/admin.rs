@@ -13,6 +13,7 @@ use crate::database::SenseiDatabase;
 use crate::disk::FilesystemLogger;
 use crate::error::Error as SenseiError;
 use crate::events::SenseiEvent;
+use crate::node::SenseiAsyncBackgroundProcessor;
 use crate::p2p::utils::parse_peer_info;
 use crate::p2p::SenseiP2P;
 use crate::{config::SenseiConfig, hex_utils, node::LightningNode, version};
@@ -28,8 +29,7 @@ use lightning::routing::gossip::NodeId;
 use lightning::routing::router::{RouteHop, RouteParameters};
 use lightning::routing::scoring::Score;
 use lightning::util::ser::{Readable, Writeable};
-use lightning_background_processor::BackgroundProcessor;
-use lightning_invoice::payment::Router;
+use lightning_invoice::payment::{InFlightHtlcs, Router};
 use macaroon::Macaroon;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -38,11 +38,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::hash_map::Entry, fs, sync::Arc};
 use tokio::sync::{broadcast, Mutex};
 use tokio::task::JoinHandle;
-use uuid::Uuid;
 
 pub struct NodeHandle {
     pub node: Arc<LightningNode>,
-    pub background_processor: BackgroundProcessor,
+    pub background_processor: SenseiAsyncBackgroundProcessor,
     pub handles: Vec<JoinHandle<()>>,
 }
 
@@ -52,6 +51,8 @@ pub struct NodeCreateInfo {
     pub alias: String,
     pub passphrase: String,
     pub start: bool,
+    pub entropy: Option<String>,
+    pub cross_node_entropy: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -61,19 +62,17 @@ pub struct NodeCreateResult {
     listen_addr: String,
     listen_port: i32,
     id: String,
+    entropy: String,
+    cross_node_entropy: String,
 }
 
 pub enum AdminRequest {
     GetStatus {
-        pubkey: String,
+        pubkey: Option<String>,
+        authenticated_admin: bool,
     },
     CreateAdmin {
         username: String,
-        alias: String,
-        passphrase: String,
-        start: bool,
-    },
-    StartAdmin {
         passphrase: String,
     },
     CreateNode {
@@ -81,6 +80,8 @@ pub enum AdminRequest {
         alias: String,
         passphrase: String,
         start: bool,
+        entropy: Option<String>,
+        cross_node_entropy: Option<String>,
     },
     BatchCreateNode {
         nodes: Vec<NodeCreateInfo>,
@@ -118,6 +119,7 @@ pub enum AdminRequest {
         route_params_hex: String,
         payment_hash_hex: String,
         first_hops: Vec<String>,
+        inflight_htlcs_hex: String,
     },
     NodeInfo {
         node_id_hex: String,
@@ -139,6 +141,7 @@ pub enum AdminRequest {
         msg_hex: String,
     },
     GetNetworkGraph {},
+    ChainUpdated {},
 }
 
 #[derive(Serialize, Debug)]
@@ -146,24 +149,15 @@ pub enum AdminRequest {
 pub enum AdminResponse {
     GetStatus {
         version: String,
+        setup: bool,
+        authenticated_node: bool,
+        authenticated_admin: bool,
         alias: Option<String>,
-        created: bool,
-        running: bool,
-        authenticated: bool,
         pubkey: Option<String>,
         username: Option<String>,
         role: Option<i16>,
     },
     CreateAdmin {
-        pubkey: String,
-        macaroon: String,
-        id: String,
-        role: i16,
-        token: String,
-    },
-    StartAdmin {
-        pubkey: String,
-        macaroon: String,
         token: String,
     },
     CreateNode {
@@ -172,6 +166,8 @@ pub enum AdminResponse {
         listen_addr: String,
         listen_port: i32,
         id: String,
+        entropy: String,
+        cross_node_entropy: String,
     },
     BatchCreateNode {
         nodes: Vec<NodeCreateResult>,
@@ -209,6 +205,7 @@ pub enum AdminResponse {
         nodes: Vec<String>,
         channels: Vec<String>,
     },
+    ChainUpdated {},
     Error(Error),
 }
 
@@ -319,23 +316,26 @@ impl From<migration::DbErr> for Error {
 impl AdminService {
     pub async fn call(&self, request: AdminRequest) -> Result<AdminResponse, Error> {
         match request {
-            AdminRequest::GetStatus { pubkey } => {
-                let root_node = self.database.get_root_node().await?;
-                match root_node {
-                    Some(_root_node) => {
+            AdminRequest::GetStatus {
+                pubkey,
+                authenticated_admin,
+            } => {
+                let setup = self.database.get_root_access_token().await?.is_some();
+                match pubkey {
+                    Some(pubkey) => {
                         let pubkey_node = self.database.get_node_by_pubkey(&pubkey).await?;
                         match pubkey_node {
                             Some(pubkey_node) => {
                                 let directory = self.node_directory.lock().await;
-                                let node_running = directory.contains_key(&pubkey);
+                                let _node_running = directory.contains_key(&pubkey);
 
                                 Ok(AdminResponse::GetStatus {
                                     version: version::get_version(),
                                     alias: Some(pubkey_node.alias),
-                                    created: true,
-                                    running: node_running,
-                                    authenticated: true,
-                                    pubkey: Some(pubkey_node.pubkey),
+                                    setup,
+                                    authenticated_admin,
+                                    authenticated_node: true,
+                                    pubkey: Some(pubkey_node.id),
                                     username: Some(pubkey_node.username),
                                     role: Some(pubkey_node.role),
                                 })
@@ -343,9 +343,9 @@ impl AdminService {
                             None => Ok(AdminResponse::GetStatus {
                                 version: version::get_version(),
                                 alias: None,
-                                created: true,
-                                running: false,
-                                authenticated: false,
+                                setup,
+                                authenticated_admin,
+                                authenticated_node: false,
                                 pubkey: None,
                                 username: None,
                                 role: None,
@@ -355,10 +355,10 @@ impl AdminService {
                     None => Ok(AdminResponse::GetStatus {
                         version: version::get_version(),
                         alias: None,
+                        setup,
+                        authenticated_admin,
+                        authenticated_node: false,
                         pubkey: None,
-                        created: false,
-                        running: false,
-                        authenticated: false,
                         username: None,
                         role: None,
                     }),
@@ -366,53 +366,23 @@ impl AdminService {
             }
             AdminRequest::CreateAdmin {
                 username,
-                alias,
                 passphrase,
-                start,
             } => {
-                let (node, macaroon) = self
-                    .create_node(username, alias, passphrase.clone(), node::NodeRole::Root)
-                    .await?;
+                let root_token = self.database.get_root_access_token().await.unwrap();
+                match root_token {
+                    Some(_) => Err(Error::Generic("Instance already initialized".to_string())),
+                    None => {
+                        let root_token = self.database.create_root_access_token().await.unwrap();
+                        let _user = self
+                            .database
+                            .create_user(username, passphrase)
+                            .await
+                            .unwrap();
 
-                let root_token = self.database.create_root_access_token().await.unwrap();
-
-                let macaroon = macaroon.serialize(macaroon::Format::V2)?;
-
-                if start {
-                    self.start_node(node.clone(), passphrase).await?;
-                }
-
-                Ok(AdminResponse::CreateAdmin {
-                    pubkey: node.pubkey,
-                    macaroon: hex_utils::hex_str(macaroon.as_slice()),
-                    id: node.id,
-                    role: node.role,
-                    token: root_token.token,
-                })
-            }
-            AdminRequest::StartAdmin { passphrase } => {
-                let root_node = self.database.get_root_node().await?;
-                let access_token = self.database.get_root_access_token().await?;
-
-                match root_node {
-                    Some(node) => {
-                        let macaroon = LightningNode::get_macaroon_for_node(
-                            &node.id,
-                            &passphrase,
-                            self.database.clone(),
-                        )
-                        .await?;
-                        self.start_node(node.clone(), passphrase).await?;
-                        let macaroon = macaroon.serialize(macaroon::Format::V2)?;
-                        Ok(AdminResponse::StartAdmin {
-                            pubkey: node.pubkey,
-                            macaroon: hex_utils::hex_str(macaroon.as_slice()),
-                            token: access_token.expect("no token in db").token,
+                        Ok(AdminResponse::CreateAdmin {
+                            token: root_token.token,
                         })
                     }
-                    None => Err(Error::Generic(String::from(
-                        "root node not found, you need to init your sensei instance",
-                    ))),
                 }
             }
             AdminRequest::StartNode { pubkey, passphrase } => {
@@ -457,9 +427,18 @@ impl AdminService {
                 alias,
                 passphrase,
                 start,
+                entropy,
+                cross_node_entropy,
             } => {
-                let (node, macaroon) = self
-                    .create_node(username, alias, passphrase.clone(), node::NodeRole::Default)
+                let (node, macaroon, entropy, cross_node_entropy) = self
+                    .create_node(
+                        username,
+                        alias,
+                        passphrase.clone(),
+                        node::NodeRole::Default,
+                        entropy,
+                        cross_node_entropy,
+                    )
                     .await?;
 
                 let macaroon = macaroon.serialize(macaroon::Format::V2)?;
@@ -468,18 +447,21 @@ impl AdminService {
                     self.start_node(node.clone(), passphrase).await?;
                 }
                 Ok(AdminResponse::CreateNode {
-                    pubkey: node.pubkey,
+                    pubkey: node.id.clone(),
                     macaroon: hex_utils::hex_str(macaroon.as_slice()),
                     listen_addr: node.listen_addr,
                     listen_port: node.listen_port,
                     id: node.id,
+                    entropy: hex_utils::hex_str(&entropy),
+                    cross_node_entropy: hex_utils::hex_str(&cross_node_entropy),
                 })
             }
             AdminRequest::BatchCreateNode { nodes } => {
-                let nodes_and_macaroons = self.batch_create_nodes(nodes.clone()).await?;
+                let nodes_and_macaroons_and_entropy =
+                    self.batch_create_nodes(nodes.clone()).await?;
 
-                for ((node, _macaroon), node_create_info) in
-                    nodes_and_macaroons.iter().zip(nodes.iter())
+                for ((node, _macaroon, _entropy, _cross_node_entropy), node_create_info) in
+                    nodes_and_macaroons_and_entropy.iter().zip(nodes.iter())
                 {
                     if node_create_info.start {
                         self.start_node(node.clone(), node_create_info.passphrase.clone())
@@ -488,16 +470,20 @@ impl AdminService {
                 }
 
                 Ok(AdminResponse::BatchCreateNode {
-                    nodes: nodes_and_macaroons
+                    nodes: nodes_and_macaroons_and_entropy
                         .into_iter()
-                        .map(|(node, macaroon)| {
+                        .map(|(node, macaroon, entropy, cross_node_entropy)| {
                             let macaroon = macaroon.serialize(macaroon::Format::V2).unwrap();
                             NodeCreateResult {
-                                pubkey: node.pubkey,
+                                pubkey: node.id.clone(),
                                 macaroon: hex_utils::hex_str(macaroon.as_slice()),
                                 listen_addr: node.listen_addr,
                                 listen_port: node.listen_port,
                                 id: node.id,
+                                entropy: hex_utils::hex_str(entropy.as_slice()),
+                                cross_node_entropy: hex_utils::hex_str(
+                                    cross_node_entropy.as_slice(),
+                                ),
                             }
                         })
                         .collect::<Vec<_>>(),
@@ -558,6 +544,7 @@ impl AdminService {
                 route_params_hex,
                 payment_hash_hex,
                 first_hops,
+                inflight_htlcs_hex,
             } => {
                 let payer = hex_utils::to_compressed_pubkey(&payer_public_key_hex)
                     .expect("valid payer public key hex");
@@ -573,11 +560,13 @@ impl AdminService {
                         ChannelDetails::read(&mut channel_details_readable).unwrap()
                     })
                     .collect::<Vec<_>>();
+                let mut inflight_htlcs_readable =
+                    Cursor::new(hex_utils::to_vec(&inflight_htlcs_hex).unwrap());
 
                 let route_params = RouteParameters::read(&mut route_params_readable).unwrap();
                 let payment_hash = PaymentHash::read(&mut payment_hash_readable).unwrap();
+                let inflight_htlcs = InFlightHtlcs::read(&mut inflight_htlcs_readable).unwrap();
 
-                let scorer = self.p2p.scorer.lock().unwrap();
                 let router = self.p2p.get_router();
                 router
                     .find_route(
@@ -585,7 +574,7 @@ impl AdminService {
                         &route_params,
                         &payment_hash,
                         Some(&first_hops.iter().collect::<Vec<_>>()),
-                        &scorer,
+                        inflight_htlcs,
                     )
                     .map(|route| AdminResponse::FindRoute {
                         route: hex_utils::hex_str(&route.encode()),
@@ -649,6 +638,10 @@ impl AdminService {
                 let _res = self.p2p.p2p_gossip.handle_channel_update(&msg);
                 Ok(AdminResponse::GossipChannelUpdate {})
             }
+            AdminRequest::ChainUpdated {} => {
+                self.chain_manager.chain_updated();
+                Ok(AdminResponse::ChainUpdated {})
+            }
             AdminRequest::GetNetworkGraph {} => {
                 let graph = self.p2p.network_graph.read_only();
                 let channels = graph.channels();
@@ -709,7 +702,7 @@ impl AdminService {
     async fn batch_create_nodes(
         &self,
         nodes: Vec<NodeCreateInfo>,
-    ) -> Result<Vec<(node::Model, Macaroon)>, crate::error::Error> {
+    ) -> Result<Vec<(node::Model, Macaroon, [u8; 32], [u8; 32])>, crate::error::Error> {
         let built_node_futures = nodes
             .into_iter()
             .map(|info| {
@@ -718,6 +711,8 @@ impl AdminService {
                     info.alias,
                     info.passphrase,
                     NodeRole::Default,
+                    info.entropy,
+                    info.cross_node_entropy,
                 )
             })
             .collect::<Vec<_>>();
@@ -731,29 +726,44 @@ impl AdminService {
             .map(|built_result| built_result.unwrap())
             .collect::<Vec<_>>();
 
-        let mut nodes_with_macaroons = Vec::with_capacity(built_nodes.len());
+        let mut nodes_with_macaroons_and_entropys = Vec::with_capacity(built_nodes.len());
         let mut db_nodes = Vec::with_capacity(built_nodes.len());
-        let mut db_seeds = Vec::with_capacity(built_nodes.len());
+        let mut db_entropys = Vec::with_capacity(built_nodes.len());
+        let mut db_cross_node_entropys = Vec::with_capacity(built_nodes.len());
         let mut db_macaroons = Vec::with_capacity(built_nodes.len());
 
-        for (node, macaroon, db_node, db_seed, db_macaroon) in built_nodes.drain(..) {
-            nodes_with_macaroons.push((node, macaroon));
+        for (
+            node,
+            macaroon,
+            db_node,
+            db_entropy,
+            db_cross_node_entropy,
+            db_macaroon,
+            entropy,
+            cross_node_entropy,
+        ) in built_nodes.drain(..)
+        {
+            nodes_with_macaroons_and_entropys.push((node, macaroon, entropy, cross_node_entropy));
             db_nodes.push(db_node);
-            db_seeds.push(db_seed);
+            db_entropys.push(db_entropy);
+            db_cross_node_entropys.push(db_cross_node_entropy);
             db_macaroons.push(db_macaroon);
         }
 
         entity::node::Entity::insert_many(db_nodes)
             .exec(self.database.get_connection())
             .await?;
-        entity::kv_store::Entity::insert_many(db_seeds)
+        entity::kv_store::Entity::insert_many(db_entropys)
+            .exec(self.database.get_connection())
+            .await?;
+        entity::kv_store::Entity::insert_many(db_cross_node_entropys)
             .exec(self.database.get_connection())
             .await?;
         entity::macaroon::Entity::insert_many(db_macaroons)
             .exec(self.database.get_connection())
             .await?;
 
-        Ok(nodes_with_macaroons)
+        Ok(nodes_with_macaroons_and_entropys)
     }
 
     async fn build_node(
@@ -762,13 +772,18 @@ impl AdminService {
         alias: String,
         passphrase: String,
         role: node::NodeRole,
+        entropy: Option<String>,
+        cross_node_entropy: Option<String>,
     ) -> Result<
         (
             entity::node::Model,
             Macaroon,
             entity::node::ActiveModel,
             entity::kv_store::ActiveModel,
+            entity::kv_store::ActiveModel,
             entity::macaroon::ActiveModel,
+            [u8; 32],
+            [u8; 32],
         ),
         crate::error::Error,
     > {
@@ -776,33 +791,60 @@ impl AdminService {
         let listen_addr = self.config.api_host.clone();
 
         let listen_port: i32 = match role {
-            node::NodeRole::Root => self.config.root_node_port.into(),
             node::NodeRole::Default => {
                 let mut available_ports = self.available_ports.lock().await;
                 available_ports.pop_front().unwrap().into()
             }
         };
 
+        // NODE ENTROPY
+        let entropy = match entropy {
+            Some(entropy_hex) => {
+                let mut entropy: [u8; 32] = [0; 32];
+                let entropy_vec = hex_utils::to_vec(&entropy_hex).unwrap();
+                entropy.copy_from_slice(entropy_vec.as_slice());
+                entropy
+            }
+            None => LightningNode::generate_entropy(),
+        };
+
+        let cross_node_entropy = match cross_node_entropy {
+            Some(cross_node_entropy_hex) => {
+                let mut cross_node_entropy: [u8; 32] = [0; 32];
+                let cross_node_entropy_vec = hex_utils::to_vec(&cross_node_entropy_hex).unwrap();
+                cross_node_entropy.copy_from_slice(cross_node_entropy_vec.as_slice());
+                cross_node_entropy
+            }
+            None => LightningNode::generate_entropy(),
+        };
+
+        let encrypted_entropy = LightningNode::encrypt_entropy(&entropy, passphrase.as_bytes())?;
+        let encrypted_cross_node_entropy =
+            LightningNode::encrypt_entropy(&cross_node_entropy, passphrase.as_bytes())?;
+
+        let seed = LightningNode::get_seed_from_entropy(self.config.network, &entropy);
+
+        // NODE PUBKEY
+        let node_pubkey = LightningNode::get_node_pubkey_from_seed(&seed);
+
         // NODE ID
-        let node_id = Uuid::new_v4().to_string();
+        let node_id = node_pubkey.clone();
 
         // NODE DIRECTORY
         let node_directory = format!("{}/{}/{}", self.data_dir, self.config.network, node_id);
         fs::create_dir_all(node_directory)?;
 
-        // NODE SEED
-        let seed = LightningNode::generate_seed();
-        let encrypted_seed = LightningNode::encrypt_seed(&seed, passphrase.as_bytes())?;
-
-        let seed_active_model = self
+        let entropy_active_model = self
             .database
-            .get_seed_active_model(node_id.clone(), encrypted_seed);
+            .get_entropy_active_model(node_id.clone(), encrypted_entropy);
 
-        // NODE PUBKEY
-        let node_pubkey = LightningNode::get_node_pubkey_from_seed(&seed);
+        let cross_node_entropy_active_model = self
+            .database
+            .get_cross_node_entropy_active_model(node_id.clone(), encrypted_cross_node_entropy);
 
         // NODE MACAROON
-        let (macaroon, macaroon_id) = LightningNode::generate_macaroon(&seed, node_pubkey.clone())?;
+        let (macaroon, macaroon_id) =
+            LightningNode::generate_macaroon(&seed, node_pubkey, "*".to_string())?;
 
         let encrypted_macaroon = LightningNode::encrypt_macaroon(&macaroon, passphrase.as_bytes())?;
 
@@ -819,7 +861,6 @@ impl AdminService {
         // NODE
         let active_node = entity::node::ActiveModel {
             id: ActiveValue::Set(node_id.clone()),
-            pubkey: ActiveValue::Set(node_pubkey.clone()),
             username: ActiveValue::Set(username.clone()),
             alias: ActiveValue::Set(alias.clone()),
             network: ActiveValue::Set(self.config.network.to_string()),
@@ -839,13 +880,21 @@ impl AdminService {
             network: self.config.network.to_string(),
             listen_addr,
             listen_port,
-            pubkey: node_pubkey,
             created_at: now,
             updated_at: now,
             status: node::NodeStatus::Stopped.into(),
         };
 
-        Ok((node, macaroon, active_node, seed_active_model, db_macaroon))
+        Ok((
+            node,
+            macaroon,
+            active_node,
+            entropy_active_model,
+            cross_node_entropy_active_model,
+            db_macaroon,
+            entropy,
+            cross_node_entropy,
+        ))
     }
 
     async fn create_node(
@@ -854,15 +903,37 @@ impl AdminService {
         alias: String,
         passphrase: String,
         role: node::NodeRole,
-    ) -> Result<(node::Model, Macaroon), crate::error::Error> {
-        let (node, macaroon, db_node, db_seed, db_macaroon) =
-            self.build_node(username, alias, passphrase, role).await?;
+        entropy: Option<String>,
+        cross_node_entropy: Option<String>,
+    ) -> Result<(node::Model, Macaroon, [u8; 32], [u8; 32]), crate::error::Error> {
+        let (
+            node,
+            macaroon,
+            db_node,
+            db_entropy,
+            db_cross_node_entropy,
+            db_macaroon,
+            entropy,
+            cross_node_entropy,
+        ) = self
+            .build_node(
+                username,
+                alias,
+                passphrase,
+                role,
+                entropy,
+                cross_node_entropy,
+            )
+            .await?;
 
-        db_seed.insert(self.database.get_connection()).await?;
+        db_entropy.insert(self.database.get_connection()).await?;
+        db_cross_node_entropy
+            .insert(self.database.get_connection())
+            .await?;
         db_macaroon.insert(self.database.get_connection()).await?;
         db_node.insert(self.database.get_connection()).await?;
 
-        Ok((node, macaroon))
+        Ok((node, macaroon, entropy, cross_node_entropy))
     }
 
     // note: please be sure to stop the node first? maybe?
@@ -880,7 +951,7 @@ impl AdminService {
     ) -> Result<(), crate::error::Error> {
         let status = {
             let mut node_directory = self.node_directory.lock().await;
-            match node_directory.entry(node.pubkey.clone()) {
+            match node_directory.entry(node.id.clone()) {
                 Entry::Vacant(entry) => {
                     entry.insert(None);
                     None
@@ -918,14 +989,14 @@ impl AdminService {
 
                 println!(
                     "starting {}@{}:{}",
-                    node.pubkey.clone(),
+                    node.id.clone(),
                     self.config.api_host.clone(),
                     node.listen_port
                 );
 
                 {
                     let mut node_directory = self.node_directory.lock().await;
-                    if let Entry::Occupied(mut entry) = node_directory.entry(node.pubkey.clone()) {
+                    if let Entry::Occupied(mut entry) = node_directory.entry(node.id.clone()) {
                         entry.insert(Some(NodeHandle {
                             node: Arc::new(lightning_node.clone()),
                             background_processor,
@@ -951,7 +1022,7 @@ impl AdminService {
         let entry = node_directory.entry(pubkey.clone());
 
         if let Entry::Occupied(entry) = entry {
-            if let Some(node_handle) = entry.remove() {
+            if let Some(mut node_handle) = entry.remove() {
                 // Disconnect our peers and stop accepting new connections. This ensures we don't continue
                 // updating our channel data after we've stopped the background processor.
                 node_handle.node.peer_manager.disconnect_all_peers();
@@ -959,7 +1030,7 @@ impl AdminService {
                 self.p2p
                     .peer_connector
                     .unregister_node(node_handle.node.id.clone());
-                let _res = node_handle.background_processor.stop();
+                let _res = node_handle.background_processor.stop().await;
                 for handle in node_handle.handles {
                     handle.abort();
                 }

@@ -24,6 +24,8 @@ use entity::sea_orm;
 use entity::sea_orm::ActiveValue;
 use entity::sea_orm::QueryOrder;
 use entity::seconds_since_epoch;
+use entity::user;
+use entity::user::Entity as User;
 use migration::Condition;
 use migration::Expr;
 use rand::thread_rng;
@@ -33,7 +35,7 @@ use sea_orm::{prelude::*, DatabaseConnection};
 use serde::Deserialize;
 use serde::Serialize;
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct LastSync {
     pub height: u32,
     pub hash: BlockHash,
@@ -86,16 +88,9 @@ impl SenseiDatabase {
             .map(|_| ())?)
     }
 
-    pub async fn get_root_node(&self) -> Result<Option<node::Model>, Error> {
-        Ok(Node::find()
-            .filter(node::Column::Role.eq(node::NodeRole::Root))
-            .one(&self.connection)
-            .await?)
-    }
-
     pub async fn get_node_by_pubkey(&self, pubkey: &str) -> Result<Option<node::Model>, Error> {
         Ok(Node::find()
-            .filter(node::Column::Pubkey.eq(pubkey))
+            .filter(node::Column::Id.eq(pubkey))
             .one(&self.connection)
             .await?)
     }
@@ -140,7 +135,7 @@ impl SenseiDatabase {
             .filter(
                 Condition::any()
                     .add(node::Column::Alias.contains(&query_string))
-                    .add(node::Column::Pubkey.contains(&query_string))
+                    .add(node::Column::Id.contains(&query_string))
                     .add(node::Column::Username.contains(&query_string)),
             )
             .order_by_desc(node::Column::UpdatedAt)
@@ -157,6 +152,31 @@ impl SenseiDatabase {
                 total: total.try_into().unwrap(),
             },
         ))
+    }
+
+    pub async fn create_user(
+        &self,
+        username: String,
+        passphrase: String,
+    ) -> Result<user::Model, Error> {
+        let hashed_password = bcrypt::hash(passphrase, 10).unwrap();
+        let user = user::ActiveModel {
+            username: ActiveValue::Set(username),
+            hashed_password: ActiveValue::Set(hashed_password),
+            ..Default::default()
+        };
+        Ok(user.insert(&self.connection).await?)
+    }
+
+    pub async fn verify_user(&self, username: String, passphrase: String) -> Result<bool, Error> {
+        match User::find()
+            .filter(user::Column::Username.eq(username))
+            .one(&self.connection)
+            .await?
+        {
+            Some(user) => Ok(bcrypt::verify(passphrase, &user.hashed_password).unwrap()),
+            None => Ok(false),
+        }
     }
 
     pub async fn get_root_access_token(&self) -> Result<Option<access_token::Model>, Error> {
@@ -602,44 +622,126 @@ impl SenseiDatabase {
         })
     }
 
-    pub async fn get_seed(&self, node_id: String) -> Result<Option<Vec<u8>>, Error> {
-        self.get_value(node_id, String::from("seed"))
+    pub async fn get_entropy(&self, node_id: String) -> Result<Option<Vec<u8>>, Error> {
+        self.get_value(node_id, String::from("entropy"))
             .await
             .map(|model| model.map(|model| model.v))
     }
 
-    pub fn get_seed_sync(&self, node_id: String) -> Result<Option<Vec<u8>>, Error> {
+    pub fn get_entropy_sync(&self, node_id: String) -> Result<Option<Vec<u8>>, Error> {
         tokio::task::block_in_place(move || {
             self.runtime_handle
-                .block_on(async move { self.get_seed(node_id).await })
+                .block_on(async move { self.get_entropy(node_id).await })
         })
     }
 
-    pub async fn set_seed(&self, node_id: String, seed: Vec<u8>) -> Result<kv_store::Model, Error> {
-        self.set_value(node_id, String::from("seed"), seed).await
-    }
-
-    pub fn set_seed_sync(&self, node_id: String, seed: Vec<u8>) -> Result<kv_store::Model, Error> {
-        tokio::task::block_in_place(move || {
-            self.runtime_handle
-                .block_on(async move { self.set_seed(node_id, seed).await })
-        })
-    }
-
-    pub async fn create_seed(
+    pub async fn set_entropy(
         &self,
         node_id: String,
-        seed: Vec<u8>,
+        entropy: Vec<u8>,
     ) -> Result<kv_store::Model, Error> {
-        self.create_value(node_id, String::from("seed"), seed).await
+        self.set_value(node_id, String::from("entropy"), entropy)
+            .await
     }
 
-    pub fn get_seed_active_model(&self, node_id: String, seed: Vec<u8>) -> kv_store::ActiveModel {
+    pub fn set_entropy_sync(
+        &self,
+        node_id: String,
+        entropy: Vec<u8>,
+    ) -> Result<kv_store::Model, Error> {
+        tokio::task::block_in_place(move || {
+            self.runtime_handle
+                .block_on(async move { self.set_entropy(node_id, entropy).await })
+        })
+    }
+
+    pub async fn create_entropy(
+        &self,
+        node_id: String,
+        entropy: Vec<u8>,
+    ) -> Result<kv_store::Model, Error> {
+        self.create_value(node_id, String::from("entropy"), entropy)
+            .await
+    }
+
+    pub fn get_entropy_active_model(
+        &self,
+        node_id: String,
+        entropy: Vec<u8>,
+    ) -> kv_store::ActiveModel {
         let now = seconds_since_epoch();
         kv_store::ActiveModel {
             node_id: ActiveValue::Set(node_id),
-            k: ActiveValue::Set(String::from("seed")),
-            v: ActiveValue::Set(seed),
+            k: ActiveValue::Set(String::from("entropy")),
+            v: ActiveValue::Set(entropy),
+            created_at: ActiveValue::Set(now),
+            updated_at: ActiveValue::Set(now),
+            ..Default::default()
+        }
+    }
+
+    pub async fn get_cross_node_entropy(&self, node_id: String) -> Result<Option<Vec<u8>>, Error> {
+        self.get_value(node_id, String::from("cross_node_entropy"))
+            .await
+            .map(|model| model.map(|model| model.v))
+    }
+
+    pub fn get_cross_node_entropy_sync(&self, node_id: String) -> Result<Option<Vec<u8>>, Error> {
+        tokio::task::block_in_place(move || {
+            self.runtime_handle
+                .block_on(async move { self.get_cross_node_entropy(node_id).await })
+        })
+    }
+
+    pub async fn set_cross_node_entropy(
+        &self,
+        node_id: String,
+        cross_node_entropy: Vec<u8>,
+    ) -> Result<kv_store::Model, Error> {
+        self.set_value(
+            node_id,
+            String::from("cross_node_entropy"),
+            cross_node_entropy,
+        )
+        .await
+    }
+
+    pub fn set_cross_node_entropy_sync(
+        &self,
+        node_id: String,
+        cross_node_entropy: Vec<u8>,
+    ) -> Result<kv_store::Model, Error> {
+        tokio::task::block_in_place(move || {
+            self.runtime_handle.block_on(async move {
+                self.set_cross_node_entropy(node_id, cross_node_entropy)
+                    .await
+            })
+        })
+    }
+
+    pub async fn create_cross_node_entropy(
+        &self,
+        node_id: String,
+        cross_node_entropy: Vec<u8>,
+    ) -> Result<kv_store::Model, Error> {
+        self.create_value(
+            node_id,
+            String::from("cross_node_entropy"),
+            cross_node_entropy,
+        )
+        .await
+    }
+
+    pub fn get_cross_node_entropy_active_model(
+        &self,
+        node_id: String,
+        cross_node_entropy: Vec<u8>,
+    ) -> kv_store::ActiveModel {
+        let now = seconds_since_epoch();
+        kv_store::ActiveModel {
+            node_id: ActiveValue::Set(node_id),
+            k: ActiveValue::Set(String::from("cross_node_entropy")),
+            v: ActiveValue::Set(cross_node_entropy),
             created_at: ActiveValue::Set(now),
             updated_at: ActiveValue::Set(now),
             ..Default::default()

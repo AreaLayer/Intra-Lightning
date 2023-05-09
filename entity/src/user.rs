@@ -3,51 +3,57 @@ use serde::{Deserialize, Serialize};
 
 use crate::seconds_since_epoch;
 
+#[derive(Debug, Clone, PartialEq, EnumIter, DeriveActiveEnum, Serialize, Deserialize)]
+#[sea_orm(rs_type = "i16", db_type = "SmallInteger")]
+pub enum UserRole {
+    #[sea_orm(num_value = 0)]
+    Default,
+}
+
+impl From<UserRole> for i16 {
+    fn from(role: UserRole) -> i16 {
+        match role {
+            UserRole::Default => 0,
+        }
+    }
+}
+
 #[derive(Copy, Clone, Default, Debug, DeriveEntity)]
 pub struct Entity;
 
 impl EntityName for Entity {
     fn table_name(&self) -> &str {
-        "payment"
+        "user"
     }
 }
 
-#[derive(Clone, Debug, PartialEq, DeriveModel, DeriveActiveModel, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, DeriveModel, DeriveActiveModel, Serialize, Deserialize)]
 pub struct Model {
     pub id: String,
-    pub node_id: String,
-    pub payment_hash: String,
-    pub status: String,
-    pub origin: String,
+    pub role: i16,
+    pub username: String,
+    pub hashed_password: String,
     pub created_at: i64,
     pub updated_at: i64,
-    pub created_by_node_id: String,
-    pub received_by_node_id: Option<String>,
-    pub amt_msat: Option<i64>,
-    pub fee_paid_msat: Option<i64>,
-    pub preimage: Option<String>,
-    pub secret: Option<String>,
-    pub label: Option<String>,
-    pub invoice: Option<String>,
+}
+
+impl Model {
+    pub fn get_role(&self) -> UserRole {
+        match self.role {
+            0 => UserRole::Default,
+            _ => panic!("invalid role"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveColumn)]
 pub enum Column {
     Id,
-    NodeId,
-    CreatedByNodeId,
-    ReceivedByNodeId,
-    PaymentHash,
-    Preimage,
-    Secret,
-    Status,
-    Origin,
-    AmtMsat,
-    FeePaidMsat,
+    Role,
+    Username,
+    HashedPassword,
     CreatedAt,
     UpdatedAt,
-    Label,
-    Invoice,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DerivePrimaryKey)]
@@ -69,21 +75,12 @@ impl ColumnTrait for Column {
     type EntityName = Entity;
     fn def(&self) -> ColumnDef {
         match self {
-            Self::Id => ColumnType::String(None).def(),
-            Self::NodeId => ColumnType::String(None).def(),
-            Self::CreatedByNodeId => ColumnType::String(None).def(),
-            Self::PaymentHash => ColumnType::String(None).def(),
-            Self::Status => ColumnType::String(None).def(),
-            Self::Origin => ColumnType::String(None).def(),
+            Self::Id => ColumnType::String(None).def().unique(),
+            Self::Role => ColumnType::SmallInteger.def(),
+            Self::Username => ColumnType::String(None).def().unique(),
+            Self::HashedPassword => ColumnType::String(None).def(),
             Self::CreatedAt => ColumnType::BigInteger.def(),
             Self::UpdatedAt => ColumnType::BigInteger.def(),
-            Self::ReceivedByNodeId => ColumnType::String(None).def().null(),
-            Self::AmtMsat => ColumnType::BigInteger.def().null(),
-            Self::FeePaidMsat => ColumnType::BigInteger.def().null(),
-            Self::Preimage => ColumnType::String(None).def().null(),
-            Self::Secret => ColumnType::String(None).def().null(),
-            Self::Label => ColumnType::String(None).def().null(),
-            Self::Invoice => ColumnType::String(None).def().null(),
         }
     }
 }
@@ -98,6 +95,7 @@ impl ActiveModelBehavior for ActiveModel {
     fn new() -> Self {
         Self {
             id: ActiveValue::Set(Uuid::new_v4().to_string()),
+            role: ActiveValue::Set(UserRole::Default.into()),
             ..<Self as ActiveModelTrait>::default()
         }
     }

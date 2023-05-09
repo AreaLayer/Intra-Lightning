@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions/setup-python@v3
+      - uses: actions/setup-python@v4
         with:
           python-version: '3.9'
           cache: 'pip'
@@ -99,7 +99,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - run: cargo clippy -- -D warnings
+      - run: cargo clippy -- -D warnings -A clippy::derive_partial_eq_without_eq
 
   install-cross:
     runs-on: ubuntu-latest

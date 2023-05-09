@@ -1,6 +1,10 @@
 use bitcoin::Network;
 use lightning::chain::chaininterface::{BroadcasterInterface, ConfirmationTarget, FeeEstimator};
+remote-bitcoind
 use lightning_block_sync::BlockSource;
+
+use lightning_block_sync::{BlockData, BlockSource};
+ main
 use tokio::runtime::Handle;
 
 use self::{
@@ -49,7 +53,11 @@ impl BlockSource for AnyBlockSource {
     fn get_block<'a>(
         &'a self,
         header_hash: &'a bitcoin::BlockHash,
+ remote-bitcoind
     ) -> lightning_block_sync::AsyncBlockSourceResult<'a, bitcoin::Block> {
+
+    ) -> lightning_block_sync::AsyncBlockSourceResult<'a, BlockData> {
+ main
         match self {
             AnyBlockSource::Local(bitcoind_client) => bitcoind_client.get_block(header_hash),
             AnyBlockSource::Remote(remote) => remote.get_block(header_hash),

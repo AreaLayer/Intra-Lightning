@@ -15,8 +15,12 @@ name = "senseid"
 path = "src/main.rs"
 
 [dependencies]
+remote-bitcoind
 bitcoin = { version = "0.28.1" }
 bitcoincore-rpc = "0.15"
+bitcoin = { version = "0.29.1" }
+bitcoincore-rpc = "0.16"
+ main
 futures = "0.3"
 chrono = "0.4"
 rand = "0.8.4"
@@ -32,10 +36,10 @@ tonic = "0.6"
 prost = "0.9"
 pin-project = "1.0"
 hyper = "0.14"
-clap = { version = "3.0", features = [ "derive", "env" ] }
+clap = { version = "3.2", features = [ "derive", "env" ] }
 headers = "0.3"
 macaroon = "0.2"
-tower-http = { version = "0.2.5", features = ["fs", "trace", "cors"] }
+tower-http = { version = "0.3.4", features = ["fs", "trace", "cors"] }
 tower-cookies = "0.4"
 dirs = "4.0"
 rust-embed="6.3.0"
@@ -49,7 +53,7 @@ senseicore = { path = "senseicore" }
 tonic-build = "0.6"
 
 [dev-dependencies]
-bitcoind = { version = "0.26", features = [ "22_0" ] }
+bitcoind = { version = "0.28.1", features = [ "22_0" ] }
 serial_test = "0.6.0"
 
 [[test]]

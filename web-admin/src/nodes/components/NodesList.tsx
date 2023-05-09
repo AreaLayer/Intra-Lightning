@@ -50,7 +50,7 @@ const ActionsColumn = ({ node, className }) => {
 
   const startNodeClicked = async () => {
     showModal({
-      component: <StartNodeForm pubkey={node.pubkey} callback={nodeStarted} />,
+      component: <StartNodeForm pubkey={node.id} callback={nodeStarted} />,
     });
   };
 
@@ -61,7 +61,7 @@ const ActionsColumn = ({ node, className }) => {
         "A stopped node can no longer send, receive, or route payments.  The node will also no longer be monitoring the chain for misbehavior.",
       ctaText: "Yes, stop it",
       callback: async () => {
-        await adminStopNode(node.pubkey);
+        await adminStopNode(node.id);
         queryClient.invalidateQueries("nodes");
       },
     });
@@ -78,11 +78,6 @@ const ActionsColumn = ({ node, className }) => {
         ),
       onClick: node.status === 0 ? startNodeClicked : stopNodeClicked,
       className: node.status === 0 ? "text-green-400" : "text-yellow-400",
-    },
-    {
-      label: "open channel",
-      icon: <PlusCircleIcon className="w-5" />,
-      path: `/admin/channels/open?connection=${node.pubkey}@${node.listenAddr}:${node.listenPort}`,
     },
   ];
 
@@ -125,7 +120,7 @@ const ConnectionInfoColumn = ({ node, value, className }) => {
   let [copied, setCopied] = useState(false);
 
   const copyClicked = () => {
-    copy(`${node.pubkey}@${node.listenAddr}:${node.listenPort}`);
+    copy(`${node.id}@${node.listenAddr}:${node.listenPort}`);
     setCopied(true);
     setTimeout(() => {
       setCopied(false);
@@ -223,7 +218,7 @@ const NodesListCard = () => {
     return nodes.map((node) => {
       return {
         ...node,
-        connectionInfo: `${truncateMiddle(node.pubkey, 10)}@${
+        connectionInfo: `${truncateMiddle(node.id, 10)}@${
           node.listenAddr
         }:${node.listenPort}`,
         actions: "Action",

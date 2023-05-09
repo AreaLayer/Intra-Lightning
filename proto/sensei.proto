@@ -3,7 +3,6 @@ package sensei;
 
 service Admin {
     rpc CreateAdmin (CreateAdminRequest) returns (CreateAdminResponse);
-    rpc StartAdmin (StartAdminRequest) returns (StartAdminResponse);
     rpc ListNodes (ListNodesRequest) returns (ListNodesResponse);
     rpc CreateNode (CreateNodeRequest) returns (CreateNodeResponse);
     rpc DeleteNode (DeleteNodeRequest) returns (DeleteNodeResponse);
@@ -30,11 +29,14 @@ service Node {
     rpc DecodeInvoice (DecodeInvoiceRequest) returns (DecodeInvoiceResponse);
     rpc Keysend (KeysendRequest) returns (KeysendResponse);
     rpc CreateInvoice (CreateInvoiceRequest) returns (CreateInvoiceResponse);
+    rpc CreatePhantomInvoice (CreatePhantomInvoiceRequest) returns (CreatePhantomInvoiceResponse);
+    rpc GetPhantomRouteHints (GetPhantomRouteHintsRequest) returns (GetPhantomRouteHintsResponse);
     rpc LabelPayment (LabelPaymentRequest) returns (LabelPaymentResponse);
     rpc DeletePayment (DeletePaymentRequest) returns (DeletePaymentResponse);
     rpc ConnectPeer (ConnectPeerRequest) returns (ConnectPeerResponse);
     rpc ListChannels (ListChannelsRequest) returns (ListChannelsResponse);
     rpc ListPayments (ListPaymentsRequest) returns (ListPaymentsResponse);
+    rpc ListPhantomPayments (ListPhantomPaymentsRequest) returns (ListPhantomPaymentsResponse);
     rpc CloseChannel (CloseChannelRequest) returns (CloseChannelResponse);
     rpc Info (InfoRequest) returns (InfoResponse);
     rpc ListPeers (ListPeersRequest) returns (ListPeersResponse);
@@ -103,17 +105,11 @@ message ListTokensResponse {
 
 message CreateAdminRequest {
     string username = 1;
-    string alias = 2;
-    string passphrase = 3;
-    bool start = 4;
+    string passphrase = 2;
 }
 
 message CreateAdminResponse {
-    string pubkey = 1;
-    string macaroon = 2;
-    string id = 3;
-    uint32 role = 4;
-    string token = 5;
+    string token = 1;
 }
 
 message CreateNodeRequest {
@@ -121,6 +117,8 @@ message CreateNodeRequest {
     string alias = 2;
     string passphrase = 3;
     bool start = 4;
+    optional string entropy = 5;
+    optional string cross_node_entropy = 6;
 }
 message CreateNodeResponse {
     string pubkey = 1;
@@ -128,6 +126,8 @@ message CreateNodeResponse {
     string listen_addr = 3;
     int32 listen_port = 4;
     string id = 5;
+    string entropy = 6;
+    string cross_node_entropy = 7;
 }
 
 message DeleteNodeRequest {
@@ -163,9 +163,9 @@ message GetStatusResponse {
     optional string pubkey = 3;
     optional string username = 4;
     optional uint32 role = 5;
-    bool created = 6;
-    bool running = 7;
-    bool authenticated = 8;
+    bool setup = 6;
+    bool authenticated_admin = 7;
+    bool authenticated_node = 8;
 }
 
 message StartNodeRequest {
@@ -199,6 +199,7 @@ message FindRouteRequest {
     string route_params_hex = 2;
     string payment_hash_hex = 3;
     repeated string first_hops = 4;
+    string inflight_htlcs_hex = 5;
 }
 message FindRouteResponse {
     string route = 1;
@@ -336,6 +337,20 @@ message CreateInvoiceResponse {
     string invoice = 1;
 }
 
+message CreatePhantomInvoiceRequest {
+    uint64 amt_msat = 1;
+    string description = 2;
+    repeated string phantom_route_hints_hex = 3;
+}
+message CreatePhantomInvoiceResponse {
+    string invoice = 1;
+}
+
+message GetPhantomRouteHintsRequest {}
+message GetPhantomRouteHintsResponse {
+    string phantom_route_hints_hex = 1;
+}
+
 message ConnectPeerRequest {
     string node_connection_string = 1;
 }
@@ -380,6 +395,9 @@ message Payment {
     string origin = 7;
     optional string label = 8;
     optional string invoice = 9;
+    string created_by_node_id = 10;
+    optional string received_by_node_id = 11;
+    string node_id = 12;
 }
 
 message PaymentsFilter {
@@ -392,6 +410,15 @@ message ListPaymentsRequest {
     optional PaymentsFilter filter = 2;
 }
 message ListPaymentsResponse {
+    repeated Payment payments = 1;
+    PaginationResponse pagination = 2;
+}
+
+message ListPhantomPaymentsRequest {
+    optional PaginationRequest pagination = 1;
+    optional PaymentsFilter filter = 2;
+}
+message ListPhantomPaymentsResponse {
     repeated Payment payments = 1;
     PaginationResponse pagination = 2;
 }
@@ -482,5 +509,34 @@ message ListKnownPeersRequest {
 }
 message ListKnownPeersResponse {
     repeated KnownPeer peers = 1;
+    PaginationResponse pagination = 2;
+}
+
+message AddClusterNodeRequest {
+    string pubkey = 1;
+    string label = 2;
+    string host = 3;
+    uint32 port = 4;
+    string macaroon_hex = 5;
+}
+message AddClusterNodeResponse {}
+
+message RemoveClusterNodeRequest {
+    string pubkey = 1;
+}
+message RemoveClusterNodeResponse {}
+
+message ClusterNode {
+    string pubkey = 1;
+    optional string label = 2;
+    string host = 3;
+    uint32 port = 4;
+    string macaroon_hex = 5;
+}
+message ListClusterNodesRequest {
+    optional PaginationRequest pagination = 1;
+}
+message ListClusterNodesResponse {
+    repeated ClusterNode cluster_nodes = 1;
     PaginationResponse pagination = 2;
 }

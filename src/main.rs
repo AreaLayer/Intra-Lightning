@@ -30,17 +30,13 @@ use sea_orm::Database;
 use crate::http::admin::add_routes as add_admin_routes;
 use crate::http::node::add_routes as add_node_routes;
 
-use ::http::{
-    header::{self, ACCEPT, AUTHORIZATION, CONTENT_TYPE, COOKIE},
-    Method, Uri,
-};
+use ::http::{header, Uri};
 use axum::{
     body::{boxed, Full},
     extract::Extension,
     handler::Handler,
-    http::StatusCode,
-    response::{Html, IntoResponse, Response},
-    routing::get,
+    http::{HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
     Router,
 };
 use clap::Parser;
@@ -59,7 +55,7 @@ use tower_cookies::CookieManagerLayer;
 use std::fs;
 use std::sync::Arc;
 use tonic::transport::Server;
-use tower_http::cors::{CorsLayer, Origin};
+use tower_http::cors::CorsLayer;
 
 use tokio::runtime::Builder;
 use tokio::sync::broadcast;
@@ -82,10 +78,6 @@ struct SenseiArgs {
     bitcoind_rpc_username: Option<String>,
     #[clap(long, env = "BITCOIND_RPC_PASSWORD")]
     bitcoind_rpc_password: Option<String>,
-    #[clap(long, env = "DEVELOPMENT_MODE")]
-    development_mode: Option<bool>,
-    #[clap(long, env = "ROOT_NODE_PORT")]
-    root_node_port: Option<u16>,
     #[clap(long, env = "PORT_RANGE_MIN")]
     port_range_min: Option<u16>,
     #[clap(long, env = "PORT_RANGE_MAX")]
@@ -112,6 +104,15 @@ struct SenseiArgs {
     http_notifier_token: Option<String>,
     #[clap(long, env = "REGION")]
     region: Option<String>,
+ remote-bitcoind
+
+    #[clap(long, env = "POLL_FOR_CHAIN_UPDATES")]
+    poll_for_chain_updates: Option<bool>,
+    #[clap(long, env = "ALLOW_ORIGINS")]
+    allow_origins: Option<Vec<String>>,
+    #[clap(long, env = "RAPID_GOSSIP_SYNC_SERVER_HOST")]
+    rapid_gossip_sync_server_host: Option<String>,
+ main
 }
 
 pub type AdminRequestResponse = (AdminRequest, Sender<AdminResponse>);
@@ -162,9 +163,6 @@ fn main() {
     if let Some(bitcoind_rpc_password) = args.bitcoind_rpc_password {
         config.bitcoind_rpc_password = bitcoind_rpc_password
     }
-    if let Some(root_node_port) = args.root_node_port {
-        config.root_node_port = root_node_port;
-    }
     if let Some(port_range_min) = args.port_range_min {
         config.port_range_min = port_range_min;
     }
@@ -204,6 +202,15 @@ fn main() {
     if let Some(region) = args.region {
         config.region = Some(region)
     }
+ remote-bitcoind
+
+    if let Some(poll_for_chain_updates) = args.poll_for_chain_updates {
+        config.poll_for_chain_updates = poll_for_chain_updates
+    }
+    if let Some(rapid_gossip_sync_server_host) = args.rapid_gossip_sync_server_host {
+        config.rapid_gossip_sync_server_host = Some(rapid_gossip_sync_server_host)
+    }
+ main
 
     if !config.database_url.starts_with("postgres:") && !config.database_url.starts_with("mysql:") {
         let sqlite_path = format!("{}/{}/{}", sensei_dir, config.network, config.database_url);
@@ -318,38 +325,30 @@ fn main() {
             .await,
         );
 
+        let api_router = Router::new();
+        let api_router = add_admin_routes(api_router);
+        let api_router = add_node_routes(api_router);
+
         let router = Router::new()
-            .route("/admin/*path", static_handler.into_service())
-            .fallback(get(not_found));
+            .nest("/api", api_router)
+            .fallback(static_handler.into_service());
 
-        let router = add_admin_routes(router);
-        let router = add_node_routes(router);
+        let cors_layer = CorsLayer::very_permissive().allow_credentials(true);
 
-        let router = match args.development_mode {
-            Some(_development_mode) => router.layer(
-                CorsLayer::new()
-                    .allow_headers(vec![AUTHORIZATION, ACCEPT, COOKIE, CONTENT_TYPE])
-                    .allow_credentials(true)
-                    .allow_origin(Origin::list(vec![
-                        "http://localhost:3001".parse().unwrap(),
-                        "http://localhost:5401".parse().unwrap(),
-                    ]))
-                    .allow_methods(vec![
-                        Method::GET,
-                        Method::POST,
-                        Method::OPTIONS,
-                        Method::DELETE,
-                        Method::PUT,
-                        Method::PATCH,
-                    ]),
-            ),
-            None => router,
-        };
+        let mut allow_origins: Vec<String> = vec![];
+        if let Some(mut origins) = args.allow_origins {
+            allow_origins.append(&mut origins);
+        }
+        let cors_layer = cors_layer.allow_origin(
+            allow_origins
+                .into_iter()
+                .map(|o| o.parse().unwrap())
+                .collect::<Vec<HeaderValue>>(),
+        );
 
-        let port = match args.development_mode {
-            Some(_) => String::from("3001"),
-            None => format!("{}", config.api_port),
-        };
+        let router = router.layer(cors_layer);
+
+        let port = format!("{}", config.api_port);
 
         let http_service = router
             .layer(CookieManagerLayer::new())
@@ -399,31 +398,77 @@ fn main() {
             }
         }
 
+ remote-bitcoind
+
+ more-umbrel-fixes
+    let http_service = router
+        .layer(CookieManagerLayer::new())
+        .layer(AddExtensionLayer::new(request_context.clone()))
+        .into_make_service();
+
+    let grpc_service = Server::builder()
+        .add_service(NodeServer::new(GrpcNodeService {
+            request_context: request_context.clone(),
+        }))
+        .add_service(AdminServer::new(GrpcAdminService {
+            request_context: request_context.clone(),
+        }))
+        .into_service();
+
+    let hybrid_service = hybrid::hybrid(http_service, grpc_service);
+
+    let server = hyper::Server::bind(&addr).serve(hybrid_service);
+
+    println!(
+        "manage your sensei node at http://localhost:{}/admin/nodes",
+        config.api_port
+    );
+
+    if let Err(e) = server.await {
+        eprintln!("server error: {}", e);
+    }
+ main
         let _res = event_sender.send(SenseiEvent::InstanceStopped {
             instance_name: config.instance_name.clone(),
             api_host: config.api_host.clone(),
         });
     });
+main
 }
 
-// We use a wildcard matcher ("/static/*file") to match against everything
-// within our defined assets directory. This is the directory on our Asset
-// struct below, where folder = "examples/public/".
 async fn static_handler(uri: Uri) -> impl IntoResponse {
     let mut path = uri.path().trim_start_matches('/').to_string();
+    let paths_to_passthrough = ["static/", "images/"];
+    let files_to_passthrough = [
+        "favicon.ico",
+        "favicon-16x16.png",
+        "favicon-32x32.png",
+        "logo192.png",
+        "logo512.png",
+        "manifest.json",
+    ];
+    let mut passthrough = false;
+
+    paths_to_passthrough.iter().for_each(|pp| {
+        if path.starts_with(pp) {
+            passthrough = true;
+        }
+    });
+
+    if files_to_passthrough.contains(&path.as_str()) {
+        passthrough = true;
+    }
 
     if path.starts_with("admin/static/") {
         path = path.replace("admin/static/", "static/");
-    } else {
+        passthrough = true;
+    }
+
+    if !passthrough {
         path = String::from("index.html");
     }
 
     StaticFile(path)
-}
-
-// Finally, we use a fallback route for anything that didn't match.
-async fn not_found() -> Html<&'static str> {
-    Html("<h1>404</h1><p>Not Found</p>")
 }
 
 #[derive(RustEmbed)]
