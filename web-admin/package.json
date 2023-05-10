@@ -4,7 +4,7 @@
   "homepage": "http://localhost:5401/",
   "private": true,
   "dependencies": {
-    "@headlessui/react": "^1.4.2",
+    "@headlessui/react": "^1.7.14",
     "@heroicons/react": "^1.0.5",
     "@l2-technology/sensei-client": "0.1.23",
     "@tailwindcss/aspect-ratio": "^0.4.0",
