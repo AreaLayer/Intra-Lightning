@@ -5,7 +5,7 @@ LK is a new lightning node implementation with a focus on easing the onboarding 
 
 ## Dependencies
 
-You will need a bitcoind instance to use Sensei.
+You will need a bitcoind instance to use LK
 
 I recommend using [Nigiri](https://nigiri.vulpem.com/) to get everything running locally.
 
@@ -13,7 +13,7 @@ I recommend using [Nigiri](https://nigiri.vulpem.com/) to get everything running
 
 To run from source you will need to take the following steps:
 
-1. Clone the repo: `git clone git@github.com:L2-Technology/sensei.git`
+1. Clone the repo: `git clone git@github.com:AreaLayer/LigthningKitgit`
 2. Build the web-admin: `cd sensei/web-admin && npm install && npm run build && cd ..`
 3. Run senseid on regtest: `cargo run --bin senseid -- --network=regtest --bitcoind-rpc-host=localhost --bitcoind-rpc-port=18443 --bitcoind-rpc-username=admin1 --bitcoind-rpc-password=123 --database-url=sensei.db`
 4. Open the admin at `http://localhost:5401/admin/nodes`
@@ -24,9 +24,9 @@ Sensei supports `sqlite`, `mysql`, and `postgres` databases.  You can configure 
 
 ### Sqlite
 
-For sqlite you just specify the filename to use for the database.  It will be saved in the Sensei data directory.
+For sqlite you just specify the filename to use for the database.  It will be saved in the LK data directory.
 
-Example: `--database-url=sensei.db`
+Example: `--database-url=LK.db`
 
 ### Postgres & MySQL
 
@@ -34,7 +34,7 @@ Sensei includes a `docker-compose.yml` file that can automatically run these dat
 
 Starting docker based databases: `docker-compose up -d`
 
-Postgres Example: `--database-url=postgres://sensei:sensei@localhost:5432/sensei`
+Postgres Example: `--database-url=postgres://sensei:sensei@localhost:5432/L
 MySQL Example: `--database-url=mysql://sensei:sensei@localhost:3306/sensei`
 
 
