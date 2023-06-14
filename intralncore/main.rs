@@ -31,6 +31,7 @@ fn main() {
         Arc::clone(&keys_manager) as Arc<dyn KeysInterface>,
         ChainParameters {
             network: Network::Testnet,
+            network: Network::Mainnet,
             best_block: Default::default(),
             get_relay_fee: Arc::new(|_| 0),
             get_lease_fee: Arc::new(|_| None),
