@@ -10,4 +10,15 @@ Create new Rust project
 
 ```rust
 $ cargo new intra_lightning
-$ cd lightning_kit
+$ cd intra_lightning
+
+Now you can the package in your machine development
+
+```cargo.tom
+
+[dependencies]
+intra-lightning = "1.0.0"
+ldk = "0.0.115"
+bdk = "0.28.0"
+bitcoin = "0.31"
+secp256k1 = { version = "0.13", features = ["rand"] }
