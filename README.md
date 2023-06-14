@@ -9,5 +9,5 @@ LK is a new lightning node implementation with a focus on easing the onboarding 
 Create new Rust project
 
 ```rust
-$ cargo new lightning_kit
+$ cargo new intra_lightning
 $ cd lightning_kit
