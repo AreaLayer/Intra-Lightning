@@ -49,3 +49,38 @@ fn main() {
         // TODO: Handle incoming messages/events here
     }
 }
+fn handle_open_channel(
+    open_channel: OpenChannel,
+    channel_manager: Arc<Mutex<ChannelManager<KeysManager>>>,
+    peer_managers: &mut HashMap<OutPoint, PeerManager<SocketDescriptor>>,
+) {
+    // Retrieve the channel_id from the open_channel message
+    let channel_id = open_channel.channel_id;
+
+    // Retrieve the peer_manager for the given channel_id
+    let peer_manager = match peer_managers.get(&channel_id) {
+        Some(peer_manager) => peer_manager,
+        None => {
+            // Create a new PeerManager for this channel if it doesn't exist
+            let new_peer_manager = PeerManager::new(
+                open_channel.chain_hash,
+                Arc::clone(&channel_manager) as Arc<dyn CustomMessageHandler>,
+            );
+            peer_managers.insert(channel_id.clone(), new_peer_manager);
+            peer_managers.get(&channel_id).unwrap()
+        }
+    };
+
+    // Handle the OpenChannel message using the PeerManager
+    match peer_manager.handle_open_channel(open_channel) {
+        Ok(_) => { /* Handle success case */ }
+        Err(PeerManagerError::InvalidMessage(_, DecodeError::InvalidValue)) => {
+            // Handle the case where the OpenChannel message is invalid
+            // e.g., the channel capacity is too low
+        }
+        Err(PeerManagerError::InvalidMessage(channel_id, DecodeError::InvalidValue)) => {
+            // Handle other specific invalid message cases
+        }
+        _ => { /* Handle other error cases */ }
+    }
+}
