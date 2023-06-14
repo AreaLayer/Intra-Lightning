@@ -11,10 +11,13 @@ Create new Rust project
 ```rust
 $ cargo new intra_lightning
 $ cd intra_lightning
+```
+
+## Cargo
 
 Now you can the package in your machine development
 
-```cargo.tom
+```cargo.toml
 
 [dependencies]
 intra-lightning = "1.0.0"
