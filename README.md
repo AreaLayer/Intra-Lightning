@@ -27,5 +27,3 @@ bitcoin = "0.31"
 secp256k1 = { version = "0.13", features = ["rand"] }
 ```
 
-## Run client in Typescript
-
