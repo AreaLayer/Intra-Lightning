@@ -6,7 +6,7 @@ Intra Lightning is a new lightning node implementation with focus in have new ex
 
 ## Run client in Rust (WIP)
 
-**Pre Requiste***
+**Pre Requiste**
 
 - Rust
 - Cargo
