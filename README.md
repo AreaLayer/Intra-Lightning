@@ -6,6 +6,12 @@ Intra Lightning is a new lightning node implementation with focus in have new ex
 
 ## Run client in Rust (WIP)
 
+**Pre Requiste***
+
+- Rust
+- Cargo
+- LDK and BDK
+
 Create new Rust project
 
 ```rust
@@ -27,6 +33,12 @@ bitcoin = "0.31"
 secp256k1 = { version = "0.13", features = ["rand"] }
 ```
 ## Run client in Javascript (Beta functional)
+
+**Pre Requisite**
+
+- Git
+- NPM
+- Node.js
 
 ```npm
 npm install bitcoinjs-lib
