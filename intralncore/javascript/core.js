@@ -1,5 +1,5 @@
 const bitcoin = require('bitcoinjs-lib');
-const {Mainnet, Testnet} = require('bitcoin-js');
+const { Mainnet, Testnet } = require('bitcoin-js');
 const lightning = require('lightning');
 const { ChannelManager, KeysManager, ChainParameters } = require('lightning');
 
