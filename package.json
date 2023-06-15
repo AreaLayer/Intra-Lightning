@@ -1,2 +1,12 @@
 "name":"intra-lightning"
 "version":"1.0.0-beta"
+
+["rust-package"]
+"ldk" : "0.0.115"
+"bdk": "0.28.0"
+"bitcoin": "0.31"
+"secp256k1 ": "version = "0.13", features" = ["rand"] 
+
+["javascript-package"]
+"bitcoin-js": "6.1.3"
+"ightning-js": "9.6.0"
