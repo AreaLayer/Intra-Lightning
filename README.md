@@ -42,7 +42,8 @@ secp256k1 = { version = "0.13", features = ["rand"] }
 
 ```npm
 npm install bitcoinjs-lib
-npm install lightning                       npm install intra-lightning
+npm install lightning                       
+npm install intra-lightning
 ```
 ## Roadmap
 
