@@ -44,3 +44,7 @@ secp256k1 = { version = "0.13", features = ["rand"] }
 npm install bitcoinjs-lib
 npm install lightning
 ```
+## Roadmap
+
+- [ ] Rust implementation
+- [ ] Beta (phase 2) with mainnet
