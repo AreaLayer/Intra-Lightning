@@ -1,6 +1,6 @@
 [root]
-name = "cargo-lock-example"
-version = "0.1.0"
+name = "Intra-Lightning"
+version = "1.0.0-beta"
 
 [[package]]
 name = "bitcoin"
