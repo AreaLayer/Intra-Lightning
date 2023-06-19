@@ -1,1 +1,75 @@
+[root]
+name = "cargo-lock-example"
+version = "0.1.0"
+
+[[package]]
+name = "bitcoin"
+version = "0.31.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha256:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+dependencies = [
+  "byteorder 1.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+  "hex 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+  "num-traits 0.2.14 (registry+https://github.com/rust-lang/crates.io-index)",
+  "rand 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "bdk"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha256:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+dependencies = [
+  "anyhow 1.0.38 (registry+https://github.com/rust-lang/crates.io-index)",
+  "async-compression 0.3.9 (registry+https://github.com/rust-lang/crates.io-index)",
+  "base64 0.13.0 (registry+https://github.com/rust-lang/crates.io-index)",
+  "bitcoin 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)",
+  "bitcoin-script 0.25.0 (registry+https://github.com/rust-lang/crates.io-index)",
+  "byteorder 1.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+  "ecdsa 0.17.1 (registry+https://github.com/rust-lang/crates.io-index)",
+  "heck 0.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
+  "hex 0.4.3 (registry+https://github.com/rust-lang/crates.io-index)",
+  "log 0.4.14 (registry+https://github.com/rust-lang/crates.io-index)",
+  "pbkdf2 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
+  "reqwest 0.11.5 (registry+https://github.com/rust-lang/crates.io-index)",
+  "serde 1.0.130 (registry+https://github.com/rust-lang/crates.io-index)",
+  "serde_json 1.0.68 (registry+https://github.com/rust-lang/crates.io-index)",
+  "tokio 1.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
+  "uuid 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
+  "zstd 0.6.3 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "intra-lightning"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha256:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+
+[[package]]
+name = "ldk"
+version = "0.0.115"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha256:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+dependencies = [
+  "bitcoin 0.31.0 (registry+https://github.com/rust-lang/crates.io-index)",
+  "futures 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
+  "futures-core 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
+  "futures-sink 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
+  "futures-util 0.3.17 (registry+https://github.com/rust-lang/crates.io-index)",
+  "tokio 1.10.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "secp256k1"
+version = "0.13.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha256:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
+dependencies = [
+  "arrayref 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
+  "byteorder 1.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
+  "cfg-if 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+  "derive_more 0.99.11 (registry+https://github.com/rust-lang/crates.io-index)",
+  "rand 0.8.4 (registry+https://github.com/rust-lang/crates.io-index)",
+  "zeroize 1.4.1 (registry+https://github.com/rust-lang/crates.io-index)",
+]
 
