@@ -1,6 +1,6 @@
 {
-OpenChannel,
-CloseChannel,
-Peers,
-UTXO,
+"OpenChannel",
+"CloseChannel",
+"Peers",
+"UTXO",
 }
