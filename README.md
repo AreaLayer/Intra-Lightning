@@ -12,3 +12,7 @@ You can check [here](https://github.com/AreaLayer/Intra-Lightning/tree/main/intr
 
 - [ ] Rust implementation
 - [ ] Beta (phase 2) with mainnet
+- [ ] On-chain
+- [ ] Channel funtions
+- [ ] Tor/I2P
+
