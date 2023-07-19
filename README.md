@@ -4,6 +4,10 @@ Intra Lightning is a new lightning node implementation with focus in have new ex
 
 **WARNING**: This software is in beta
 
+## Run client
+
+You can check [here](https://github.com/AreaLayer/Intra-Lightning/tree/main/intralncore)
+
 ## Roadmap
 
 - [ ] Rust implementation
