@@ -24,5 +24,5 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [ ] Beta (phase 2) with mainnet
 - [ ] On-chain
 - [ ] Channel funtions
-- [ ] Tor/I2P
+- [ ] Tor
 
