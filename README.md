@@ -20,7 +20,7 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 
 ## Roadmap
 
-- [ ] Rust implementation
+- [x] Rust implementation
 - [ ] CLI (Rust)
 - [ ] Beta (phase 2) with mainnet
 - [ ] On-chain
