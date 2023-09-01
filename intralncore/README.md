@@ -15,6 +15,18 @@ $ cargo new intra_lightning
 $ cd intra_lightning
 ```
 
+
+To build your CLI application, navigate to the project directory in the terminal and run:
+
+```cargo
+cargo build
+```
+
+To run your CLI application
+```cargo
+cargo run -- <main.rs> <cli.rs>
+```
+
 ## Cargo
 
 Now you can the package in your machine development
