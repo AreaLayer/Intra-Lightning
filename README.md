@@ -25,5 +25,6 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [ ] Beta (phase 2) with mainnet
 - [ ] On-chain
 - [ ] Channel funtions
+- [ ] HSM
 - [x] Tor
 
