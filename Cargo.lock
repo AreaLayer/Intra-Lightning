@@ -1,6 +1,6 @@
 [root]
 name = "Intra-Lightning"
-version = "1.0.0-beta"
+version = "1.0.3-beta"
 
 [[package]]
 name = "bitcoin"
@@ -47,7 +47,7 @@ checksum = "sha256:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 
 [[package]]
 name = "ldk"
-version = "0.0.115"
+version = "0.0.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "sha256:XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"
 dependencies = [
