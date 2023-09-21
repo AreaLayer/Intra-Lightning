@@ -6,6 +6,9 @@ Intra Lightning is a new lightning node implementation with focus in have new ex
 
 ⚠️**WARNING 2**: **Unstable sotware**
 
+**Contributions are welcome**
+
+
 ## Run client
 
 You can check [here](https://github.com/AreaLayer/Intra-Lightning/tree/main/intralncore)
