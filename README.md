@@ -29,5 +29,6 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [ ] On-chain
 - [ ] Channel funtions
 - [ ] HSM
+- [ ] AppImage and APk
 - [x] Tor
 
