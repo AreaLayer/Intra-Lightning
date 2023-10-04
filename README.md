@@ -24,10 +24,10 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 ## Roadmap
 
 - [x] Rust implementation (WIP)
-- [ ] CLI (Rust) [WIP]
+- [x] CLI (Rust) [WIP]
 - [ ] Beta (phase 2) with mainnet
-- [ ] On-chain
-- [ ] Channel funtions
+- [x] On-chain (WIP)
+- [x] Channel funtions (WIP)
 - [ ] HSM
 - [ ] AppImage and APk
 - [x] Tor
