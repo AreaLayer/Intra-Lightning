@@ -6,6 +6,8 @@ Intra Lightning is a new lightning node implementation with focus in have new ex
 
 ⚠️**WARNING 2**: **Unstable sotware**
 
+⚠️**WARNING 3**: **Use small amount**
+
 **Contributions are welcome**
 
 
