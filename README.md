@@ -34,4 +34,7 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [ ] AppImage and APk
 - [x] Final modules for Javascript and CLI (WIP)
 - [x] Tor
+- [ ] Fix bugs and issues
+- [ ] Compile Cargo.lock
+- [ ] Release out of betax bugs and issues
 
