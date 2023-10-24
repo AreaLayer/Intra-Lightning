@@ -36,5 +36,5 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [x] Tor
 - [ ] Fix bugs and issues
 - [ ] Compile Cargo.lock
-- [ ] Release out of betax bugs and issues
+- [ ] Release out of beta bugs and issues
 
