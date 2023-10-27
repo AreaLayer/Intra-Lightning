@@ -17,7 +17,7 @@ You can check [here](https://github.com/AreaLayer/Intra-Lightning/tree/main/intr
 
 ## Security
 
-The code is in rapid developement and testnet. For security reasons use small amounts.
+The code is in rapid developement and testnet. For security reasons use small amounts and use with caution.
 
 ## Contribution
 
