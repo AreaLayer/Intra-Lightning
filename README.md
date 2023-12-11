@@ -35,6 +35,7 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [x] Final modules for Javascript and CLI (WIP)
 - [x] Tor
 - [ ] Fix bugs and issues
+- [ ] Node
 - [ ] Compile Cargo.lock
 - [ ] Release out of beta bugs and issues
 
