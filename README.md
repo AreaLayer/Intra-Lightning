@@ -37,5 +37,5 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [ ] Fix bugs and issues
 - [ ] Node
 - [ ] Compile Cargo.lock
-- [ ] Release out of beta bugs and issues
+- [ ] Release out of beta bugs and issues in 2024
 
