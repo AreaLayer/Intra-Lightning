@@ -5,12 +5,12 @@ edition = "2023"
 
 [dependencies]
 intra-lightning = "1.0.2"
-ldk = "0.0.117"
+ldk = "0.0.119"
 bdk = "0.28.0"
 bitcoin = "0.31"
 secp256k1 = { version = "0.13", features = ["rand"] }
 lightning-invoice = { version = "0.25.0", path = "../lightning-invoice" }
-lightning-persister = { version = "0.0.117", path = "../lightning-persister" }
+lightning-persister = { version = "0.0.119", path = "../lightning-persister" }
 
 [build-dependencies]
 tonic-build = "0.6"
