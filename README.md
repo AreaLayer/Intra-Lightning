@@ -32,6 +32,7 @@ Check [here](https://github.com/AreaLayer/Intra-Lightning/blob/main/CONTRIBUTING
 - [x] Channel funtions (WIP)
 - [ ] HSM
 - [ ] AppImage and APk
+- [ ] Splicing
 - [x] Final modules for Javascript and CLI (WIP)
 - [x] Tor
 - [ ] Fix bugs and issues
