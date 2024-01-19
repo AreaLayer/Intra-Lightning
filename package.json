@@ -1,5 +1,5 @@
 "name":"intra-lightning"
-"version":"1.0.5-beta"
+"version":"1.0.6-beta"
 
 ["rust-package"]
 "ldk" : "0.0.119"
